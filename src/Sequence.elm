@@ -1,13 +1,19 @@
 module Sequence exposing (..)
 
+import IntDict exposing (IntDict)
 import Dict exposing (Dict)
 import Value exposing (..)
 import List.Extra
 import Tuple
+import Random.Pcg as Rand
 
 
 type alias Sequence a =
-    Dict Path (Entry a)
+    IntDict (Entry a)
+
+
+type alias Path =
+    Int
 
 
 type alias Op b =
@@ -18,89 +24,174 @@ type alias Op b =
     }
 
 
-apply : List (Op a) -> Sequence a -> Sequence a
-apply ops seq =
-    List.foldl
-        (\{ path, target, op } seq ->
-            case op of
-                Insert v ->
-                    insert path target v seq
+offset =
+    8
 
-                Remove ->
-                    remove path target seq
+
+alloc : Path -> Path -> Path
+alloc start end =
+    let
+        range =
+            (Debug.log "end" end)
+                - (Debug.log "start" start)
+                |> Debug.log "range"
+
+        seed =
+            range |> Rand.initialSeed
+    in
+        allocWithSeed seed start end 0
+
+
+allocWithSeed : Rand.Seed -> Path -> Path -> Int -> Path
+allocWithSeed seed start end i =
+    let
+        range =
+            (Debug.log "end" end)
+                - (Debug.log "start" start)
+                |> Debug.log "range"
+
+        offset =
+            toFloat range
+                |> logBase 2
+                |> (*) 100
+                |> Debug.log "offset"
+                |> round
+
+        startOffset =
+            start
+                + offset
+                |> Debug.log "startOffset"
+
+        generator =
+            startOffset
+                |> min end
+                |> Rand.int start
+
+        ( num, seed2 ) =
+            Rand.step generator seed
+    in
+        if num == start && i < 10 then
+            allocWithSeed seed2 start end <| i + 1
+        else
+            num
+
+
+createInsert : String -> Path -> a -> Op a
+createInsert target path a =
+    Insert a
+        |> Op target target path
+
+
+apply : List (Op a) -> Sequence a -> ( Sequence a, List (Op a) )
+apply ops seq =
+    List.foldr
+        (\op ( seq, newOps ) ->
+            let
+                ( seq_, success ) =
+                    case op.op of
+                        Insert v ->
+                            insert op.path op.target v seq
+
+                        Remove ->
+                            remove op.path op.target seq
+            in
+                ( seq_
+                , if success then
+                    op :: newOps
+                  else
+                    newOps
+                )
         )
-        seq
+        ( seq, [] )
         ops
 
 
-insert : Path -> String -> a -> Sequence a -> Sequence a
+insert : Path -> String -> a -> Sequence a -> ( Sequence a, Bool )
 insert path origin item seq =
-    case Dict.get path seq of
+    case IntDict.get path seq of
         Nothing ->
-            Dict.insert path (Single origin (Value item)) seq
+            ( IntDict.insert path (Single origin (Value item)) seq
+            , True
+            )
 
         Just (Single origin2 value) ->
             if origin /= origin2 then
-                Dict.insert path
+                ( IntDict.insert path
                     (Dict.insert origin (Value item) Dict.empty
                         |> Dict.insert origin2 value
                         |> Concurrent
                     )
                     seq
+                , True
+                )
             else if value == Tomb TombUnknown then
-                Dict.insert path
+                ( IntDict.insert path
                     (Single origin2 (Tomb (TombValue item)))
                     seq
+                , True
+                )
             else
-                seq
+                ( seq, False )
 
         Just (Concurrent dict) ->
             case Dict.get origin dict of
                 Just (Tomb TombUnknown) ->
-                    Dict.insert origin (Tomb (TombValue item)) dict
+                    ( Dict.insert origin (Tomb (TombValue item)) dict
                         |> Concurrent
-                        |> (\c -> Dict.insert path c seq)
+                        |> (\c -> IntDict.insert path c seq)
+                    , True
+                    )
 
                 Nothing ->
-                    Dict.insert origin (Value item) dict
+                    ( Dict.insert origin (Value item) dict
                         |> Concurrent
-                        |> (\c -> Dict.insert path c seq)
+                        |> (\c -> IntDict.insert path c seq)
+                    , True
+                    )
 
                 _ ->
-                    seq
+                    ( seq, False )
 
 
-remove : Path -> String -> Sequence a -> Sequence a
+remove : Path -> String -> Sequence a -> ( Sequence a, Bool )
 remove path origin seq =
-    case Dict.get path seq of
+    case IntDict.get path seq of
         Nothing ->
-            Dict.insert path (Single origin (Tomb TombUnknown)) seq
+            ( IntDict.insert path (Single origin (Tomb TombUnknown)) seq
+            , True
+            )
 
         Just (Single origin2 value) ->
             if origin2 == origin then
                 case value of
                     Value v ->
-                        Dict.insert path (Single origin (Tomb (TombValue v))) seq
+                        ( IntDict.insert path (Single origin (Tomb (TombValue v))) seq
+                        , True
+                        )
 
                     Tomb _ ->
-                        seq
+                        ( seq, False )
             else
-                Dict.insert path
+                ( IntDict.insert path
                     (Dict.insert origin (Tomb TombUnknown) Dict.empty
                         |> Dict.insert origin2 value
                         |> Concurrent
                     )
                     seq
+                , True
+                )
 
         Just (Concurrent dict) ->
             case Dict.get origin dict of
                 Just (Value v) ->
-                    Dict.insert origin (Tomb (TombValue v)) dict
+                    ( Dict.insert origin (Tomb (TombValue v)) dict
                         |> Concurrent
-                        |> (\c -> Dict.insert path c seq)
+                        |> (\c -> IntDict.insert path c seq)
+                    , True
+                    )
 
                 _ ->
-                    seq
+                    ( seq, False )
 
 
 find : (a -> Bool) -> Sequence a -> Maybe a
@@ -117,7 +208,7 @@ find predicate seq =
                 Tomb _ ->
                     Nothing
     in
-        Dict.foldl
+        IntDict.foldl
             (\path entry result ->
                 case result of
                     Just r ->
@@ -147,7 +238,7 @@ find predicate seq =
 
 toList : Bool -> Sequence a -> List a
 toList withTombs =
-    Dict.values >> List.map (entryToList withTombs) >> List.concat
+    IntDict.values >> List.map (entryToList withTombs) >> List.concat
 
 
 entryToList : Bool -> Entry a -> List a
@@ -198,7 +289,7 @@ replaceIf predicate item seq =
                 Tomb t ->
                     Tomb t
     in
-        Dict.map
+        IntDict.map
             (\path entry ->
                 case entry of
                     Single origin value ->
@@ -216,55 +307,38 @@ replaceIf predicate item seq =
             seq
 
 
-getNeighbors : Int -> Sequence a -> ( Maybe Path, Maybe Path )
-getNeighbors int aSequence =
-    let
-        keys =
-            Dict.keys aSequence
-    in
-        if int == List.length keys then
-            ( List.Extra.last keys
-            , Nothing
-            )
-        else if int == 0 then
-            ( Nothing
-            , List.head keys
-            )
-        else
-            case List.drop (int - 1) keys |> List.take 2 of
-                first :: second :: _ ->
-                    ( Just first, Just second )
-
-                first :: _ ->
-                    ( Just first, Nothing )
-
-                _ ->
-                    ( Nothing, Nothing )
-
-
 fromList : String -> List ( Path, a ) -> Sequence a
 fromList target list =
-    Dict.fromList list
-        |> Dict.map
+    IntDict.fromList list
+        |> IntDict.map
             (\path item ->
                 Single target (Value item)
             )
 
 
 first : Sequence a -> Maybe ( Path, Entry a )
-first seq =
-    Dict.toList seq
-        |> List.head
+first =
+    IntDict.findMin
+
+
+last : Sequence a -> Maybe ( Path, Entry a )
+last =
+    IntDict.findMax
+
+
+before : Path -> Sequence a -> Maybe ( Path, Entry a )
+before =
+    IntDict.before
 
 
 empty : Sequence a
 empty =
-    Dict.empty
+    IntDict.empty
 
 
 contains : a -> Sequence a -> Bool
 contains item seq =
-    Dict.values seq
+    IntDict.values seq
         |> List.Extra.find
             (\entry ->
                 case entry of
@@ -284,7 +358,7 @@ contains item seq =
 
 map : (a -> b) -> Sequence a -> Sequence b
 map fun =
-    Dict.map
+    IntDict.map
         (\_ entry ->
             mapEntry fun entry
         )
@@ -292,12 +366,17 @@ map fun =
 
 foldl : (Path -> Entry a -> b -> b) -> b -> Sequence a -> b
 foldl =
-    Dict.foldl
+    IntDict.foldl
+
+
+foldr : (Path -> Entry a -> b -> b) -> b -> Sequence a -> b
+foldr =
+    IntDict.foldr
 
 
 get : Path -> String -> Sequence a -> Maybe (Value a)
 get path target seq =
-    Dict.get path seq
+    IntDict.get path seq
         |> Maybe.andThen
             (\entry ->
                 case entry of
@@ -314,4 +393,4 @@ get path target seq =
 
 union : Sequence a -> Sequence a -> Sequence a
 union =
-    Dict.union
+    IntDict.union

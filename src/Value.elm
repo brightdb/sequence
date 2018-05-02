@@ -18,10 +18,6 @@ type TombValue a
     | TombUnknown
 
 
-type alias Path =
-    List Int
-
-
 type Operation a
     = Insert a
     | Remove
