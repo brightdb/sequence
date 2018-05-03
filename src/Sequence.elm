@@ -6,6 +6,7 @@ import Value exposing (..)
 import List.Extra
 import Tuple
 import Random.Pcg as Rand
+import Bitwise exposing (..)
 
 
 type alias Sequence a =
@@ -25,21 +26,167 @@ type alias Op b =
 
 
 offset =
-    8
+    4
+
+
+maxLayer =
+    4
+
+
+maxBit =
+    31
+
+
+gauss x =
+    (x ^ 2 + x)
+        // 2
+
+
+bits l =
+    (gauss (offset + l))
+        - (gauss (offset - 1))
+        + 1
+
+
+shift l =
+    maxBit
+        - bits l
+        |> Debug.log "shift"
+
+
+layerMaskComplete l =
+    (shiftLeftBy (bits l) 1 - 1)
+        |> shiftLeftBy (shift l)
+
+
+layerMask l =
+    let
+        bits =
+            if l == 0 then
+                offset + 1
+            else
+                offset + l
+    in
+        (shiftLeftBy bits 1 - 1)
+            |> shiftLeftBy (shift l)
+
+
+boundarySize l =
+    4
+
+
+layerFromRange : Path -> Path -> Int -> Int
+layerFromRange start end l =
+    let
+        mask =
+            layerMask l
+    in
+        if and start mask == and end mask && l < maxLayer then
+            layerFromRange start end (l + 1)
+        else
+            l
+
+
+layerFromPath : Path -> Int -> Int
+layerFromPath path l =
+    let
+        mask =
+            layerMask l
+                |> Debug.log ("mask " ++ toString l)
+    in
+        if and path mask == 0 && l > 0 then
+            layerFromPath path (l - 1)
+        else
+            l
+
+
+layerSize l =
+    2 ^ (offset + l)
 
 
 alloc : Path -> Path -> Path
 alloc start end =
     let
-        range =
-            (Debug.log "end" end)
-                - (Debug.log "start" start)
-                |> Debug.log "range"
+        start_ =
+            min start end
+                |> Debug.log "start"
+
+        end_ =
+            max start end
+                |> Debug.log "end"
+
+        layer =
+            layerFromPath start_ maxLayer
+                |> Debug.log "layer"
+
+        layerEnd =
+            layerFromPath end_ maxLayer
+                |> Debug.log "layerEnd"
+
+        --posStartOnLayer
+        p =
+            layerMask layer
+                |> and start_
+                |> shiftRightBy (shift layer)
+                |> Debug.log "p"
+
+        --posEndOnLayer
+        q =
+            Debug.log "q" <|
+                if layer > layerEnd then
+                    layerSize layer
+                else
+                    layerMask layer
+                        |> and end_
+                        |> shiftRightBy (shift layer)
+
+        seed2 =
+            start + end |> Rand.initialSeed
+
+        ( layer_, p_, q_ ) =
+            Debug.log "corrected" <|
+                if q - p > 1 then
+                    ( layer, p, q )
+                else if layer < maxLayer then
+                    ( layer + 1, 0, layerSize (layer + 1) )
+                else
+                    ( layer, p, q )
 
         seed =
-            range |> Rand.initialSeed
+            layerMaskComplete layer_ |> Rand.initialSeed
+
+        ( b, _ ) =
+            Rand.step Rand.bool seed
+
+        boundary =
+            boundarySize layer_
+                |> Debug.log "boundary"
+
+        ( lower, upper ) =
+            Debug.log "lower, upper" <|
+                if True then
+                    ( p_ + 1, p_ + boundary |> min (q_ - 1) )
+                else
+                    ( q_ - boundary |> max (p_ + 1), q_ - 1 )
+
+        lm =
+            if layer_ > 0 then
+                layer_
+                    - 1
+                    |> layerMaskComplete
+            else
+                0
+
+        offsetStart =
+            and start lm
+                |> Debug.log "offsetStart"
     in
-        allocWithSeed seed start end 0
+        Rand.step (Rand.int lower upper) seed2
+            |> Tuple.first
+            |> Debug.log "pos"
+            |> shiftLeftBy (shift layer_)
+            |> (+) offsetStart
+            |> Debug.log "alloc"
 
 
 allocWithSeed : Rand.Seed -> Path -> Path -> Int -> Path
@@ -80,6 +227,12 @@ createInsert : String -> Path -> a -> Op a
 createInsert target path a =
     Insert a
         |> Op target target path
+
+
+createRemove : String -> String -> Path -> Op a
+createRemove origin target path =
+    Remove
+        |> Op origin target path
 
 
 apply : List (Op a) -> Sequence a -> ( Sequence a, List (Op a) )
@@ -329,6 +482,11 @@ last =
 before : Path -> Sequence a -> Maybe ( Path, Entry a )
 before =
     IntDict.before
+
+
+after : Path -> Sequence a -> Maybe ( Path, Entry a )
+after =
+    IntDict.after
 
 
 empty : Sequence a
