@@ -1,20 +1,39 @@
-module Sequence exposing (..)
+module Sequence
+    exposing
+        ( Sequence
+        , Path
+        , Op
+        , Entry(..)
+        , Value(..)
+        , TombValue(..)
+        , Operation(..)
+        , MVR
+        , alloc
+        , createInsert
+        , createRemove
+        , apply
+        , empty
+        , first
+        , last
+        , after
+        , before
+        , find
+        )
 
 import IntDict exposing (IntDict)
 import Dict exposing (Dict)
-import Value exposing (..)
 import List.Extra
-import Tuple
+import Tuple exposing (..)
 import Random.Pcg as Rand
 import Bitwise exposing (..)
 
 
-type alias Sequence a =
-    IntDict (Entry a)
+type Sequence a
+    = Sequence (IntDict (Entry a))
 
 
-type alias Path =
-    Int
+type Path
+    = Path Int
 
 
 type alias Op b =
@@ -23,6 +42,55 @@ type alias Op b =
     , path : Path
     , op : Operation b
     }
+
+
+type Entry a
+    = Single String (Value a)
+    | Concurrent (MVR a)
+
+
+type Value a
+    = Value a
+    | Tomb (TombValue a)
+
+
+type TombValue a
+    = TombValue a
+    | TombUnknown
+
+
+type Operation a
+    = Insert a
+    | Remove
+
+
+type MVR a
+    = MVR (Dict String (Value a))
+
+
+mapEntry : (a -> b) -> Entry a -> Entry b
+mapEntry fun entry =
+    let
+        mapValue v =
+            case v of
+                Value v ->
+                    fun v |> Value
+
+                Tomb (TombValue v) ->
+                    fun v |> TombValue |> Tomb
+
+                Tomb TombUnknown ->
+                    Tomb TombUnknown
+    in
+        case entry of
+            Single o v ->
+                Single o <|
+                    mapValue v
+
+            Concurrent (MVR dict) ->
+                Dict.map (\_ -> mapValue) dict
+                    |> MVR
+                    |> Concurrent
 
 
 offset =
@@ -74,7 +142,7 @@ boundarySize l =
     4
 
 
-layerFromRange : Path -> Path -> Int -> Int
+layerFromRange : Int -> Int -> Int -> Int
 layerFromRange start end l =
     let
         mask =
@@ -86,7 +154,7 @@ layerFromRange start end l =
             l
 
 
-layerFromPath : Path -> Int -> Int
+layerFromPath : Int -> Int -> Int
 layerFromPath path l =
     let
         mask =
@@ -103,7 +171,7 @@ layerSize l =
 
 
 alloc : Path -> Path -> Path
-alloc start end =
+alloc (Path start) (Path end) =
     let
         start_ =
             min start end
@@ -173,6 +241,7 @@ alloc start end =
             |> Tuple.first
             |> shiftLeftBy (shift layer_)
             |> (+) offsetStart
+            |> Path
 
 
 createInsert : String -> Path -> a -> Op a
@@ -188,17 +257,22 @@ createRemove origin target path =
 
 
 apply : List (Op a) -> Sequence a -> ( Sequence a, List (Op a) )
-apply ops seq =
+apply ops (Sequence seq) =
     List.foldr
         (\op ( seq, newOps ) ->
             let
+                path =
+                    case op.path of
+                        Path p ->
+                            p
+
                 ( seq_, success ) =
                     case op.op of
                         Insert v ->
-                            insert op.path op.target v seq
+                            insert path op.target v seq
 
                         Remove ->
-                            remove op.path op.target seq
+                            remove path op.target seq
             in
                 ( seq_
                 , if success then
@@ -209,9 +283,10 @@ apply ops seq =
         )
         ( seq, [] )
         ops
+        |> mapFirst Sequence
 
 
-insert : Path -> String -> a -> Sequence a -> ( Sequence a, Bool )
+insert : Int -> String -> a -> IntDict (Entry a) -> ( IntDict (Entry a), Bool )
 insert path origin item seq =
     case IntDict.get path seq of
         Nothing ->
@@ -224,6 +299,7 @@ insert path origin item seq =
                 ( IntDict.insert path
                     (Dict.insert origin (Value item) Dict.empty
                         |> Dict.insert origin2 value
+                        |> MVR
                         |> Concurrent
                     )
                     seq
@@ -238,10 +314,11 @@ insert path origin item seq =
             else
                 ( seq, False )
 
-        Just (Concurrent dict) ->
+        Just (Concurrent (MVR dict)) ->
             case Dict.get origin dict of
                 Just (Tomb TombUnknown) ->
                     ( Dict.insert origin (Tomb (TombValue item)) dict
+                        |> MVR
                         |> Concurrent
                         |> (\c -> IntDict.insert path c seq)
                     , True
@@ -249,6 +326,7 @@ insert path origin item seq =
 
                 Nothing ->
                     ( Dict.insert origin (Value item) dict
+                        |> MVR
                         |> Concurrent
                         |> (\c -> IntDict.insert path c seq)
                     , True
@@ -258,7 +336,7 @@ insert path origin item seq =
                     ( seq, False )
 
 
-remove : Path -> String -> Sequence a -> ( Sequence a, Bool )
+remove : Int -> String -> IntDict (Entry a) -> ( IntDict (Entry a), Bool )
 remove path origin seq =
     case IntDict.get path seq of
         Nothing ->
@@ -280,16 +358,18 @@ remove path origin seq =
                 ( IntDict.insert path
                     (Dict.insert origin (Tomb TombUnknown) Dict.empty
                         |> Dict.insert origin2 value
+                        |> MVR
                         |> Concurrent
                     )
                     seq
                 , True
                 )
 
-        Just (Concurrent dict) ->
+        Just (Concurrent (MVR dict)) ->
             case Dict.get origin dict of
                 Just (Value v) ->
                     ( Dict.insert origin (Tomb (TombValue v)) dict
+                        |> MVR
                         |> Concurrent
                         |> (\c -> IntDict.insert path c seq)
                     , True
@@ -300,7 +380,7 @@ remove path origin seq =
 
 
 find : (a -> Bool) -> Sequence a -> Maybe a
-find predicate seq =
+find predicate (Sequence seq) =
     let
         foldValue value =
             case value of
@@ -324,7 +404,7 @@ find predicate seq =
                             Single _ value ->
                                 foldValue value
 
-                            Concurrent dict ->
+                            Concurrent (MVR dict) ->
                                 Dict.foldl
                                     (\origin value result ->
                                         case result of
@@ -341,151 +421,62 @@ find predicate seq =
             seq
 
 
-toList : Bool -> Sequence a -> List a
-toList withTombs =
-    IntDict.values >> List.map (entryToList withTombs) >> List.concat
-
-
-entryToList : Bool -> Entry a -> List a
-entryToList withTombs entry =
-    case entry of
-        Single origin (Value a) ->
-            [ a ]
-
-        Single origin (Tomb (TombValue a)) ->
-            if withTombs then
-                [ a ]
-            else
-                []
-
-        Single origin (Tomb TombUnknown) ->
-            []
-
-        Concurrent dict ->
-            Dict.values dict
-                |> List.filterMap
-                    (\a ->
-                        case a of
-                            Value a ->
-                                Just a
-
-                            Tomb (TombValue a) ->
-                                if withTombs then
-                                    Just a
-                                else
-                                    Nothing
-
-                            Tomb TombUnknown ->
-                                Nothing
-                    )
-
-
-replaceIf : (a -> Bool) -> a -> Sequence a -> Sequence a
-replaceIf predicate item seq =
-    let
-        replaceIfValue value =
-            case value of
-                Value a ->
-                    if predicate a then
-                        Value item
-                    else
-                        Value a
-
-                Tomb t ->
-                    Tomb t
-    in
-        IntDict.map
-            (\path entry ->
-                case entry of
-                    Single origin value ->
-                        replaceIfValue value
-                            |> Single origin
-
-                    Concurrent dict ->
-                        Dict.map
-                            (\origin value ->
-                                replaceIfValue value
-                            )
-                            dict
-                            |> Concurrent
-            )
-            seq
-
-
-fromList : String -> List ( Path, a ) -> Sequence a
-fromList target list =
-    IntDict.fromList list
-        |> IntDict.map
-            (\path item ->
-                Single target (Value item)
-            )
+values : Sequence a -> List (Entry a)
+values (Sequence seq) =
+    IntDict.values seq
 
 
 first : Sequence a -> Maybe ( Path, Entry a )
-first =
-    IntDict.findMin
+first (Sequence seq) =
+    IntDict.findMin seq
+        |> Maybe.map (mapFirst Path)
 
 
 last : Sequence a -> Maybe ( Path, Entry a )
-last =
-    IntDict.findMax
+last (Sequence seq) =
+    IntDict.findMax seq
+        |> Maybe.map (mapFirst Path)
 
 
 before : Path -> Sequence a -> Maybe ( Path, Entry a )
-before =
-    IntDict.before
+before (Path path) (Sequence seq) =
+    IntDict.before path seq
+        |> Maybe.map (mapFirst Path)
 
 
 after : Path -> Sequence a -> Maybe ( Path, Entry a )
-after =
-    IntDict.after
+after (Path path) (Sequence seq) =
+    IntDict.after path seq
+        |> Maybe.map (mapFirst Path)
 
 
 empty : Sequence a
 empty =
-    IntDict.empty
-
-
-contains : a -> Sequence a -> Bool
-contains item seq =
-    IntDict.values seq
-        |> List.Extra.find
-            (\entry ->
-                case entry of
-                    Single _ (Value i) ->
-                        i == item
-
-                    Concurrent dict ->
-                        Dict.values dict
-                            |> List.Extra.find ((==) (Value item))
-                            |> (/=) Nothing
-
-                    _ ->
-                        False
-            )
-        |> (/=) Nothing
+    Sequence IntDict.empty
 
 
 map : (a -> b) -> Sequence a -> Sequence b
-map fun =
+map fun (Sequence seq) =
     IntDict.map
         (\_ entry ->
             mapEntry fun entry
         )
+        seq
+        |> Sequence
 
 
 foldl : (Path -> Entry a -> b -> b) -> b -> Sequence a -> b
-foldl =
-    IntDict.foldl
+foldl fun init (Sequence seq) =
+    IntDict.foldl (\int -> fun (Path int)) init seq
 
 
 foldr : (Path -> Entry a -> b -> b) -> b -> Sequence a -> b
-foldr =
-    IntDict.foldr
+foldr fun init (Sequence seq) =
+    IntDict.foldr (\int -> fun (Path int)) init seq
 
 
 get : Path -> String -> Sequence a -> Maybe (Value a)
-get path target seq =
+get (Path path) target (Sequence seq) =
     IntDict.get path seq
         |> Maybe.andThen
             (\entry ->
@@ -496,11 +487,6 @@ get path target seq =
                         else
                             Nothing
 
-                    Concurrent mvr ->
+                    Concurrent (MVR mvr) ->
                         Dict.get target mvr
             )
-
-
-union : Sequence a -> Sequence a -> Sequence a
-union =
-    IntDict.union
