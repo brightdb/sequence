@@ -51,7 +51,6 @@ bits l =
 shift l =
     maxBit
         - bits l
-        |> Debug.log "shift"
 
 
 layerMaskComplete l =
@@ -92,7 +91,6 @@ layerFromPath path l =
     let
         mask =
             layerMask l
-                |> Debug.log ("mask " ++ toString l)
     in
         if and path mask == 0 && l > 0 then
             layerFromPath path (l - 1)
@@ -109,48 +107,41 @@ alloc start end =
     let
         start_ =
             min start end
-                |> Debug.log "start"
 
         end_ =
             max start end
-                |> Debug.log "end"
 
         layer =
             layerFromPath start_ maxLayer
-                |> Debug.log "layer"
 
         layerEnd =
             layerFromPath end_ maxLayer
-                |> Debug.log "layerEnd"
 
         --posStartOnLayer
         p =
             layerMask layer
                 |> and start_
                 |> shiftRightBy (shift layer)
-                |> Debug.log "p"
 
         --posEndOnLayer
         q =
-            Debug.log "q" <|
-                if layer > layerEnd then
-                    layerSize layer
-                else
-                    layerMask layer
-                        |> and end_
-                        |> shiftRightBy (shift layer)
+            if layer > layerEnd then
+                layerSize layer
+            else
+                layerMask layer
+                    |> and end_
+                    |> shiftRightBy (shift layer)
 
         seed2 =
             start + end |> Rand.initialSeed
 
         ( layer_, p_, q_ ) =
-            Debug.log "corrected" <|
-                if q - p > 1 then
-                    ( layer, p, q )
-                else if layer < maxLayer then
-                    ( layer + 1, 0, layerSize (layer + 1) )
-                else
-                    ( layer, p, q )
+            if q - p > 1 then
+                ( layer, p, q )
+            else if layer < maxLayer then
+                ( layer + 1, 0, layerSize (layer + 1) )
+            else
+                ( layer, p, q )
 
         seed =
             layerMaskComplete layer_ |> Rand.initialSeed
@@ -160,14 +151,12 @@ alloc start end =
 
         boundary =
             boundarySize layer_
-                |> Debug.log "boundary"
 
         ( lower, upper ) =
-            Debug.log "lower, upper" <|
-                if True then
-                    ( p_ + 1, p_ + boundary |> min (q_ - 1) )
-                else
-                    ( q_ - boundary |> max (p_ + 1), q_ - 1 )
+            if True then
+                ( p_ + 1, p_ + boundary |> min (q_ - 1) )
+            else
+                ( q_ - boundary |> max (p_ + 1), q_ - 1 )
 
         lm =
             if layer_ > 0 then
@@ -179,48 +168,11 @@ alloc start end =
 
         offsetStart =
             and start lm
-                |> Debug.log "offsetStart"
     in
         Rand.step (Rand.int lower upper) seed2
             |> Tuple.first
-            |> Debug.log "pos"
             |> shiftLeftBy (shift layer_)
             |> (+) offsetStart
-            |> Debug.log "alloc"
-
-
-allocWithSeed : Rand.Seed -> Path -> Path -> Int -> Path
-allocWithSeed seed start end i =
-    let
-        range =
-            (Debug.log "end" end)
-                - (Debug.log "start" start)
-                |> Debug.log "range"
-
-        offset =
-            toFloat range
-                |> logBase 2
-                |> (*) 100
-                |> Debug.log "offset"
-                |> round
-
-        startOffset =
-            start
-                + offset
-                |> Debug.log "startOffset"
-
-        generator =
-            startOffset
-                |> min end
-                |> Rand.int start
-
-        ( num, seed2 ) =
-            Rand.step generator seed
-    in
-        if num == start && i < 10 then
-            allocWithSeed seed2 start end <| i + 1
-        else
-            num
 
 
 createInsert : String -> Path -> a -> Op a
