@@ -83,6 +83,6 @@ Yields:
 * y,a
 * z
 
-So x, y and z have been inserted by "me" while a has been inserted by "you" concurrently to y.
+So `x`, `y` and `z` have been inserted by "me" while `a` has been inserted by "you" concurrently to `y`.
 
 For a collaborative editor demo project as a more elaborated example see [brightdb-text](brightdb/brightdb-text).
