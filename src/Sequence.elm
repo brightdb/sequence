@@ -18,7 +18,6 @@ module Sequence
         , last
         , after
         , before
-        , find
         , foldl
         , foldr
         , mvrToList
@@ -26,6 +25,44 @@ module Sequence
         , minPath
         , maxPath
         )
+
+{-| This is a prototype of a CRDT for sequential data written in Elm.
+
+**Work in progress!** Use with caution.
+
+Implementation stems from Nedelec et al. "LSEQ: an adaptive structure for sequences in distributed collaborative editing" (2013).
+
+
+# Definition
+
+@docs Sequence, Path, Op, Entry, Value, TombValue, Operation, MVR
+
+
+# Operations
+
+@docs alloc, createInsert, createRemove, apply
+
+
+# Sequence handling
+
+@docs empty, get, first, last, after, before, foldl, foldr
+
+
+# MVR handling
+
+@docs mvrToList
+
+
+# Serializing/Deserializing
+
+@docs stringToOp
+
+
+# Constants
+
+@docs minPath, maxPath
+
+-}
 
 import IntDict exposing (IntDict)
 import Dict exposing (Dict)
@@ -35,78 +72,75 @@ import Random.Pcg as Rand
 import Bitwise exposing (..)
 
 
-maxPath =
-    shiftLeftBy 30 1
-        |> Path
-
-
-minPath =
-    Path 0
-
-
+{-| The data type itself. Takes a user-defined type as its value type.
+-}
 type Sequence a
     = Sequence (IntDict (Entry a))
 
 
+{-| The unique identifier of a Entry's position in the sequence.
+It's called "path" because the data type consists of multiple layers
+comparable to a filesystem's directories. A path to a value works like
+a path to a file.
+-}
 type Path
     = Path Int
 
 
+{-| All data manipulation happens through `Operation`s. It either is an `Insert a` or `Remove`.
+-}
+type Operation a
+    = Insert a
+    | Remove
+
+
+{-| An entry in the sequence might be a single value (just one user applied an
+operation on it) or a multi-value registry (MVR) in case multiple users a
+applied operation at this path.
+-}
+type Entry a
+    = Single String (Value a)
+    | Concurrent (MVR a)
+
+
+{-| A multi-value registry is a dictionary of user identifiers and Values.
+Get its contents with [`mvrToList`](#mvrToList).
+-}
+type MVR a
+    = MVR (Dict String (Value a))
+
+
+{-| The actual value. After applying an Insert operation it is `Value a`, after
+a Remove operation it is a `Tomb (TombValue a)`. So storage of removed values never gets
+freed.
+-}
+type Value a
+    = Value a
+    | Tomb (TombValue a)
+
+
+{-| If a remove operation is applied at a path which has a value, it's turned
+into `Tomb (TombValue a)`. If the operation is applied on a free path it
+becomes `TombUnknown`. If an insert operation is applied after this, it's
+turned into `TombValue a` finally. This way it does not matter in which order
+insert and remove operation are applied.
+-}
+type TombValue a
+    = TombValue a
+    | TombUnknown
+
+
+{-| The complete self-contained op(eration). `origin` is the identifier for the
+creating user/instance. If the Entry at `path` already contains a MVR apply the
+operation at
+`target`'s value.
+-}
 type alias Op b =
     { origin : String
     , target : String
     , path : Path
     , op : Operation b
     }
-
-
-type Entry a
-    = Single String (Value a)
-    | Concurrent (MVR a)
-
-
-type Value a
-    = Value a
-    | Tomb (TombValue a)
-
-
-type TombValue a
-    = TombValue a
-    | TombUnknown
-
-
-type Operation a
-    = Insert a
-    | Remove
-
-
-type MVR a
-    = MVR (Dict String (Value a))
-
-
-mapEntry : (a -> b) -> Entry a -> Entry b
-mapEntry fun entry =
-    let
-        mapValue v =
-            case v of
-                Value v ->
-                    fun v |> Value
-
-                Tomb (TombValue v) ->
-                    fun v |> TombValue |> Tomb
-
-                Tomb TombUnknown ->
-                    Tomb TombUnknown
-    in
-        case entry of
-            Single o v ->
-                Single o <|
-                    mapValue v
-
-            Concurrent (MVR dict) ->
-                Dict.map (\_ -> mapValue) dict
-                    |> MVR
-                    |> Concurrent
 
 
 offset =
@@ -186,6 +220,10 @@ layerSize l =
     2 ^ (offset + l)
 
 
+{-| Allocate a path given it's lower and upper bounds (non-inclusive).
+The bounds should be paths that are already taken and the possible path's
+between should all be free.
+-}
 alloc : Path -> Path -> Path
 alloc (Path start) (Path end) =
     let
@@ -261,18 +299,27 @@ alloc (Path start) (Path end) =
             |> Path
 
 
+{-| Create an insert operation. Pass it the user identifier, a path and the
+value to insert.
+-}
 createInsert : String -> Path -> a -> Op a
 createInsert target path a =
     Insert a
         |> Op target target path
 
 
+{-| Create a remove operation. Pass it the removing user's identifier, the user
+identifier of the removed value (ie. to target it in a MVR) and the path.
+-}
 createRemove : String -> String -> Path -> Op a
 createRemove origin target path =
     Remove
         |> Op origin target path
 
 
+{-| Apply multiple ops at once to a sequence. Returns the updated sequence and
+list of successful operations (which actually changed something).
+-}
 apply : List (Op a) -> Sequence a -> ( Sequence a, List (Op a) )
 apply ops (Sequence seq) =
     List.foldr
@@ -443,65 +490,79 @@ values (Sequence seq) =
     IntDict.values seq
 
 
+{-| Return the first entry of the sequence and its path.
+If the sequence is empty returns `Nothing`.
+-}
 first : Sequence a -> Maybe ( Path, Entry a )
 first (Sequence seq) =
     IntDict.findMin seq
         |> Maybe.map (mapFirst Path)
 
 
+{-| Return the last entry of the sequence and its path.
+If the sequence is empty returns `Nothing`.
+-}
 last : Sequence a -> Maybe ( Path, Entry a )
 last (Sequence seq) =
     IntDict.findMax seq
         |> Maybe.map (mapFirst Path)
 
 
+{-| Return the entry and its path before the given path in the sequence.
+Returns `Nothing` if there none.
+-}
 before : Path -> Sequence a -> Maybe ( Path, Entry a )
 before (Path path) (Sequence seq) =
     IntDict.before path seq
         |> Maybe.map (mapFirst Path)
 
 
+{-| Return the entry and its path after the given path in the sequence.
+Returns `Nothing` if there none.
+-}
 after : Path -> Sequence a -> Maybe ( Path, Entry a )
 after (Path path) (Sequence seq) =
     IntDict.after path seq
         |> Maybe.map (mapFirst Path)
 
 
+{-| An empty sequence.
+-}
 empty : Sequence a
 empty =
     Sequence IntDict.empty
 
 
-map : (a -> b) -> Sequence a -> Sequence b
-map fun (Sequence seq) =
-    IntDict.map
-        (\_ entry ->
-            mapEntry fun entry
-        )
-        seq
-        |> Sequence
-
-
+{-| Fold a sequence from the left.
+-}
 foldl : (Path -> Entry a -> b -> b) -> b -> Sequence a -> b
 foldl fun init (Sequence seq) =
     IntDict.foldl (\int -> fun (Path int)) init seq
 
 
+{-| Fold a sequence from the right.
+-}
 foldr : (Path -> Entry a -> b -> b) -> b -> Sequence a -> b
 foldr fun init (Sequence seq) =
     IntDict.foldr (\int -> fun (Path int)) init seq
 
 
+{-| Lookup an entry at the given path.
+-}
 get : Path -> Sequence a -> Maybe (Entry a)
 get (Path path) (Sequence seq) =
     IntDict.get path seq
 
 
+{-| Inspect an MVR by turning it into a list of tuples of the user identifier and the `Value`.
+-}
 mvrToList : MVR a -> List ( String, Value a )
 mvrToList (MVR mvr) =
     Dict.toList mvr
 
 
+{-| Deserialize an op.
+-}
 stringToOp : String -> Result String (Op Char)
 stringToOp str =
     case String.split "," str of
@@ -530,3 +591,18 @@ stringToOperation str =
 
         _ ->
             Err <| "unknown operation " ++ str
+
+
+{-| The greatest path possible
+-}
+maxPath : Path
+maxPath =
+    shiftLeftBy 30 1
+        |> Path
+
+
+{-| The lowest path possible
+-}
+minPath : Path
+minPath =
+    Path 0
