@@ -21,7 +21,8 @@ module Sequence
         , foldl
         , foldr
         , mvrToList
-        , stringToOp
+        , decodeOp
+        , encodeOp
         , minPath
         , maxPath
         )
@@ -53,9 +54,9 @@ Implementation stems from Nedelec et al. "LSEQ: an adaptive structure for sequen
 @docs mvrToList
 
 
-# Serializing/Deserializing
+# Decoders
 
-@docs stringToOp
+@docs decodeOp, encodeOp
 
 
 # Constants
@@ -70,6 +71,8 @@ import List.Extra
 import Tuple exposing (..)
 import Random.Pcg as Rand
 import Bitwise exposing (..)
+import Json.Decode as Dec exposing (Decoder)
+import Json.Encode as Enc
 
 
 {-| The data type itself. Takes a user-defined type as its value type.
@@ -561,36 +564,65 @@ mvrToList (MVR mvr) =
     Dict.toList mvr
 
 
-{-| Deserialize an op.
+{-| Decode an Op.
 -}
-stringToOp : String -> Result String (Op Char)
-stringToOp str =
-    case String.split "," str of
-        origin :: target :: path :: operation :: [] ->
-            case ( String.toInt path, stringToOperation operation ) of
-                ( Ok path, Ok operation ) ->
-                    Op origin target (Path path) operation
-                        |> Ok
-
-                _ ->
-                    "could not decode " ++ str |> Err
-
-        _ ->
-            "could not decode " ++ str |> Err
+decodeOp : Decoder a -> Decoder (Op a)
+decodeOp decoder =
+    Dec.map4 Op
+        (Dec.index 0 Dec.string)
+        (Dec.index 1 Dec.string)
+        (Dec.index 2 decodePath)
+        (Dec.index 3 <| decodeOperation decoder)
 
 
-stringToOperation : String -> Result String (Operation Char)
-stringToOperation str =
-    case String.toList str of
-        'i' :: char :: [] ->
-            Insert char
-                |> Ok
+decodePath =
+    Dec.map Path Dec.int
 
-        'r' :: [] ->
-            Ok Remove
 
-        _ ->
-            Err <| "unknown operation " ++ str
+decodeOperation : Decoder a -> Decoder (Operation a)
+decodeOperation decoder =
+    Dec.oneOf
+        [ Dec.field "i" decoder
+            |> Dec.map Insert
+        , Dec.string
+            |> Dec.andThen
+                (\str ->
+                    if str == "r" then
+                        Dec.succeed Remove
+                    else
+                        Dec.fail "unknown operation"
+                )
+        ]
+
+
+{-| Encoder an Op given an value specific encoder.
+-}
+encodeOp : (a -> Enc.Value) -> Op a -> Enc.Value
+encodeOp encoder op =
+    [ Enc.string op.origin
+    , Enc.string op.target
+    , encodePath op.path
+    , encodeOperation encoder op.op
+    ]
+        |> Enc.list
+
+
+encodePath (Path path) =
+    Enc.int path
+
+
+encodeOperation : (a -> Enc.Value) -> Operation a -> Enc.Value
+encodeOperation encoder op =
+    case op of
+        Insert a ->
+            [ ( "i"
+              , encoder a
+              )
+            ]
+                |> Enc.object
+
+        Remove ->
+            Enc.string "r"
 
 
 {-| The greatest path possible
