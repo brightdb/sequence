@@ -13,11 +13,18 @@ module Sequence
         , createRemove
         , apply
         , empty
+        , get
         , first
         , last
         , after
         , before
         , find
+        , foldl
+        , foldr
+        , mvrToList
+        , stringToOp
+        , minPath
+        , maxPath
         )
 
 import IntDict exposing (IntDict)
@@ -26,6 +33,15 @@ import List.Extra
 import Tuple exposing (..)
 import Random.Pcg as Rand
 import Bitwise exposing (..)
+
+
+maxPath =
+    shiftLeftBy 30 1
+        |> Path
+
+
+minPath =
+    Path 0
 
 
 type Sequence a
@@ -241,6 +257,7 @@ alloc (Path start) (Path end) =
             |> Tuple.first
             |> shiftLeftBy (shift layer_)
             |> (+) offsetStart
+            |> Debug.log "alloc"
             |> Path
 
 
@@ -475,18 +492,41 @@ foldr fun init (Sequence seq) =
     IntDict.foldr (\int -> fun (Path int)) init seq
 
 
-get : Path -> String -> Sequence a -> Maybe (Value a)
-get (Path path) target (Sequence seq) =
+get : Path -> Sequence a -> Maybe (Entry a)
+get (Path path) (Sequence seq) =
     IntDict.get path seq
-        |> Maybe.andThen
-            (\entry ->
-                case entry of
-                    Single t v ->
-                        if t == target then
-                            Just v
-                        else
-                            Nothing
 
-                    Concurrent (MVR mvr) ->
-                        Dict.get target mvr
-            )
+
+mvrToList : MVR a -> List ( String, Value a )
+mvrToList (MVR mvr) =
+    Dict.toList mvr
+
+
+stringToOp : String -> Result String (Op Char)
+stringToOp str =
+    case String.split "," str of
+        origin :: target :: path :: operation :: [] ->
+            case ( String.toInt path, stringToOperation operation ) of
+                ( Ok path, Ok operation ) ->
+                    Op origin target (Path path) operation
+                        |> Ok
+
+                _ ->
+                    "could not decode " ++ str |> Err
+
+        _ ->
+            "could not decode " ++ str |> Err
+
+
+stringToOperation : String -> Result String (Operation Char)
+stringToOperation str =
+    case String.toList str of
+        'i' :: char :: [] ->
+            Insert char
+                |> Ok
+
+        'r' :: [] ->
+            Ok Remove
+
+        _ ->
+            Err <| "unknown operation " ++ str
