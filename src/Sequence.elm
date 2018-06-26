@@ -25,6 +25,8 @@ module Sequence
         , encodeOp
         , minPath
         , maxPath
+        , path
+        , comparePath
         )
 
 {-| This is a prototype of a CRDT for sequential data written in Elm.
@@ -59,13 +61,13 @@ Implementation stems from Nedelec et al. "LSEQ: an adaptive structure for sequen
 @docs decodeOp, encodeOp
 
 
-# Constants
+# Paths
 
-@docs minPath, maxPath
+@docs minPath, maxPath, path, comparePath
 
 -}
 
-import IntDict exposing (IntDict)
+import IntDict as Layer exposing (IntDict)
 import Dict exposing (Dict)
 import List.Extra
 import Tuple exposing (..)
@@ -78,7 +80,16 @@ import Json.Encode as Enc
 {-| The data type itself. Takes a user-defined type as its value type.
 -}
 type Sequence a
-    = Sequence (IntDict (Entry a))
+    = Sequence (Layer a)
+
+
+type alias Layer a =
+    IntDict (LayerItem a)
+
+
+type LayerItem a
+    = Item (Entry a)
+    | SubLayer (Layer a)
 
 
 {-| The unique identifier of a Entry's position in the sequence.
@@ -87,7 +98,7 @@ comparable to a filesystem's directories. A path to a value works like
 a path to a file.
 -}
 type Path
-    = Path Int
+    = Path ( Int, List Int )
 
 
 {-| All data manipulation happens through `Operation`s. It either is an `Insert a` or `Remove`.
@@ -144,6 +155,10 @@ type alias Op b =
     , path : Path
     , op : Operation b
     }
+
+
+emptyLayer =
+    Layer.empty
 
 
 offset =
@@ -223,83 +238,87 @@ layerSize l =
     2 ^ (offset + l)
 
 
+padList len list =
+    list ++ List.repeat (len - List.length list) 0
+
+
+splitTail i list =
+    List.reverse (i :: list)
+        |> List.Extra.uncons
+        |> Maybe.map (mapSecond List.reverse)
+        |> Maybe.withDefault ( i, [] )
+
+
+getCommonPrefix ( sHead, sTail ) ( eHead, eTail ) =
+    let
+        maxLen =
+            max (List.length sTail) (List.length eTail)
+
+        ( p, prefixP ) =
+            padList maxLen sTail
+                |> splitTail sHead
+
+        ( q_, prefixQ ) =
+            padList maxLen eTail
+                |> splitTail eHead
+
+        q =
+            if prefixP == prefixQ then
+                q_
+            else
+                List.length prefixP |> layerSize
+    in
+        if abs (p - q) > 1 then
+            ( prefixP, p, q )
+        else
+            ( prefixP ++ [ p ], 0, List.length prefixP + 1 |> layerSize )
+
+
 {-| Allocate a path given it's lower and upper bounds (non-inclusive).
 The bounds should be paths that are already taken and the possible path's
 between should all be free.
 -}
 alloc : Path -> Path -> Path
-alloc (Path start) (Path end) =
+alloc (Path ( sHead, sTail )) (Path ( eHead, eTail )) =
     let
-        start_ =
-            min start end
-
-        end_ =
-            max start end
-
-        layer =
-            layerFromPath start_ maxLayer
-
-        layerEnd =
-            layerFromPath end_ maxLayer
-
-        --posStartOnLayer
-        p =
-            layerMask layer
-                |> and start_
-                |> shiftRightBy (shift layer)
-
-        --posEndOnLayer
-        q =
-            if layer > layerEnd then
-                layerSize layer
-            else
-                layerMask layer
-                    |> and end_
-                    |> shiftRightBy (shift layer)
-
-        seed2 =
-            start + end |> Rand.initialSeed
-
-        ( layer_, p_, q_ ) =
-            if q - p > 1 then
-                ( layer, p, q )
-            else if layer < maxLayer then
-                ( layer + 1, 0, layerSize (layer + 1) )
-            else
-                ( layer, p, q )
+        ( prefix, p, q ) =
+            getCommonPrefix ( sHead, sTail ) ( eHead, eTail )
 
         seed =
-            layerMaskComplete layer_ |> Rand.initialSeed
+            List.sum prefix
+                + p
+                + q
+                |> Rand.initialSeed
+
+        seed2 =
+            List.sum prefix |> Rand.initialSeed
 
         ( b, _ ) =
-            Rand.step Rand.bool seed
+            Rand.step Rand.bool seed2
 
         boundary =
-            boundarySize layer_
+            List.length prefix
+                |> boundarySize
 
         ( lower, upper ) =
-            if True then
-                ( p_ + 1, p_ + boundary |> min (q_ - 1) )
+            if b then
+                ( p + 1, p + boundary |> min (q - 1) )
             else
-                ( q_ - boundary |> max (p_ + 1), q_ - 1 )
+                ( q - boundary |> max (p + 1), q - 1 )
 
-        lm =
-            if layer_ > 0 then
-                layer_
-                    - 1
-                    |> layerMaskComplete
-            else
-                0
-
-        offsetStart =
-            and start lm
+        i =
+            Rand.step (Rand.int lower upper) seed
+                |> Tuple.first
     in
-        Rand.step (Rand.int lower upper) seed2
-            |> Tuple.first
-            |> shiftLeftBy (shift layer_)
-            |> (+) offsetStart
-            |> Debug.log "alloc"
-            |> Path
+        case prefix of
+            [] ->
+                Path ( i, [] )
+
+            head :: tail ->
+                tail
+                    ++ [ i ]
+                    |> (,) head
+                    |> Path
 
 
 {-| Create an insert operation. Pass it the user identifier, a path and the
@@ -325,25 +344,20 @@ list of successful operations (which actually changed something).
 -}
 apply : List (Op a) -> Sequence a -> ( Sequence a, List (Op a) )
 apply ops (Sequence seq) =
-    List.foldr
+    List.foldl
         (\op ( seq, newOps ) ->
             let
-                path =
-                    case op.path of
-                        Path p ->
-                            p
-
                 ( seq_, success ) =
                     case op.op of
                         Insert v ->
-                            insert path op.target v seq
+                            insert op.path op.target v seq
 
                         Remove ->
-                            remove path op.target seq
+                            remove op.path op.target seq
             in
                 ( seq_
                 , if success then
-                    op :: newOps
+                    newOps ++ [ op ]
                   else
                     newOps
                 )
@@ -353,101 +367,166 @@ apply ops (Sequence seq) =
         |> mapFirst Sequence
 
 
-insert : Int -> String -> a -> IntDict (Entry a) -> ( IntDict (Entry a), Bool )
-insert path origin item seq =
-    case IntDict.get path seq of
-        Nothing ->
-            ( IntDict.insert path (Single origin (Value item)) seq
-            , True
-            )
-
-        Just (Single origin2 value) ->
-            if origin /= origin2 then
-                ( IntDict.insert path
-                    (Dict.insert origin (Value item) Dict.empty
-                        |> Dict.insert origin2 value
-                        |> MVR
-                        |> Concurrent
+insert : Path -> String -> a -> Layer a -> ( Layer a, Bool )
+insert (Path ( head, tail )) origin value layer =
+    case tail of
+        [] ->
+            case Layer.get head layer of
+                Nothing ->
+                    ( Layer.insert head (Item (Single origin (Value value))) layer
+                    , True
                     )
-                    seq
+
+                Just (Item entry) ->
+                    insertAtEntry origin value entry
+                        |> mapFirst (\entry -> Layer.insert head (Item entry) layer)
+
+                Just (SubLayer subLayer) ->
+                    insert (Path ( 0, [] )) origin value subLayer
+                        |> mapFirst
+                            (\newLayer ->
+                                Layer.insert head (SubLayer newLayer) layer
+                            )
+
+        next :: rest ->
+            case Layer.get head layer of
+                Nothing ->
+                    insert (Path ( next, rest )) origin value emptyLayer
+                        |> mapFirst
+                            (\newLayer ->
+                                Layer.insert head (SubLayer newLayer) layer
+                            )
+
+                Just (Item b) ->
+                    Layer.insert 0 (Item b) emptyLayer
+                        |> insert (Path ( next, rest )) origin value
+                        |> mapFirst
+                            (\newLayer ->
+                                Layer.insert head (SubLayer newLayer) layer
+                            )
+
+                Just (SubLayer subLayer) ->
+                    insert (Path ( next, rest )) origin value subLayer
+                        |> mapFirst
+                            (\newLayer ->
+                                Layer.insert head (SubLayer newLayer) layer
+                            )
+
+
+insertAtEntry : String -> a -> Entry a -> ( Entry a, Bool )
+insertAtEntry origin value entry =
+    case entry of
+        Single origin2 v ->
+            if origin /= origin2 then
+                ( Dict.insert origin (Value value) Dict.empty
+                    |> Dict.insert origin2 v
+                    |> MVR
+                    |> Concurrent
                 , True
                 )
-            else if value == Tomb TombUnknown then
-                ( IntDict.insert path
-                    (Single origin2 (Tomb (TombValue item)))
-                    seq
+            else if v == Tomb TombUnknown then
+                ( Single origin2 (Tomb (TombValue value))
                 , True
                 )
             else
-                ( seq, False )
+                ( entry, False )
 
-        Just (Concurrent (MVR dict)) ->
+        Concurrent (MVR dict) ->
             case Dict.get origin dict of
                 Just (Tomb TombUnknown) ->
-                    ( Dict.insert origin (Tomb (TombValue item)) dict
+                    ( Dict.insert origin (Tomb (TombValue value)) dict
                         |> MVR
                         |> Concurrent
-                        |> (\c -> IntDict.insert path c seq)
                     , True
                     )
 
                 Nothing ->
-                    ( Dict.insert origin (Value item) dict
+                    ( Dict.insert origin (Value value) dict
                         |> MVR
                         |> Concurrent
-                        |> (\c -> IntDict.insert path c seq)
                     , True
                     )
 
                 _ ->
-                    ( seq, False )
+                    ( entry, False )
 
 
-remove : Int -> String -> IntDict (Entry a) -> ( IntDict (Entry a), Bool )
-remove path origin seq =
-    case IntDict.get path seq of
-        Nothing ->
-            ( IntDict.insert path (Single origin (Tomb TombUnknown)) seq
-            , True
-            )
+remove : Path -> String -> Layer a -> ( Layer a, Bool )
+remove (Path ( head, tail )) origin layer =
+    case tail of
+        [] ->
+            case Layer.get head layer of
+                Nothing ->
+                    ( layer, False )
 
-        Just (Single origin2 value) ->
+                Just (Item entry) ->
+                    removeAtEntry origin entry
+                        |> mapFirst (\entry -> Layer.insert head (Item entry) layer)
+
+                Just (SubLayer subLayer) ->
+                    remove (Path ( 0, [] )) origin subLayer
+                        |> mapFirst
+                            (\newLayer ->
+                                Layer.insert head (SubLayer newLayer) layer
+                            )
+
+        next :: rest ->
+            case Layer.get head layer of
+                Nothing ->
+                    ( layer, False )
+
+                Just (Item a) ->
+                    ( layer, False )
+
+                Just (SubLayer subLayer) ->
+                    remove (Path ( next, rest )) origin subLayer
+                        |> mapFirst
+                            (\newLayer ->
+                                Layer.insert head (SubLayer newLayer) layer
+                            )
+
+
+removeAtEntry : String -> Entry a -> ( Entry a, Bool )
+removeAtEntry origin entry =
+    case entry of
+        Single origin2 value ->
             if origin2 == origin then
                 case value of
                     Value v ->
-                        ( IntDict.insert path (Single origin (Tomb (TombValue v))) seq
+                        ( Single origin (Tomb (TombValue v))
                         , True
                         )
 
                     Tomb _ ->
-                        ( seq, False )
+                        ( entry, False )
             else
-                ( IntDict.insert path
-                    (Dict.insert origin (Tomb TombUnknown) Dict.empty
-                        |> Dict.insert origin2 value
-                        |> MVR
-                        |> Concurrent
-                    )
-                    seq
+                ( Dict.insert origin (Tomb TombUnknown) Dict.empty
+                    |> Dict.insert origin2 value
+                    |> MVR
+                    |> Concurrent
                 , True
                 )
 
-        Just (Concurrent (MVR dict)) ->
+        Concurrent (MVR dict) ->
             case Dict.get origin dict of
                 Just (Value v) ->
                     ( Dict.insert origin (Tomb (TombValue v)) dict
                         |> MVR
                         |> Concurrent
-                        |> (\c -> IntDict.insert path c seq)
                     , True
                     )
 
                 _ ->
-                    ( seq, False )
+                    ( entry, False )
 
 
 find : (a -> Bool) -> Sequence a -> Maybe a
 find predicate (Sequence seq) =
+    findInLayer predicate seq
+
+
+findInLayer : (a -> Bool) -> Layer a -> Maybe a
+findInLayer predicate layer =
     let
         foldValue value =
             case value of
@@ -460,37 +539,57 @@ find predicate (Sequence seq) =
                 Tomb _ ->
                     Nothing
     in
-        IntDict.foldl
-            (\path entry result ->
+        Layer.foldl
+            (\path item result ->
                 case result of
                     Just r ->
                         Just r
 
                     Nothing ->
-                        case entry of
-                            Single _ value ->
-                                foldValue value
+                        case item of
+                            SubLayer subLayer ->
+                                findInLayer predicate subLayer
 
-                            Concurrent (MVR dict) ->
-                                Dict.foldl
-                                    (\origin value result ->
-                                        case result of
-                                            Just r ->
-                                                Just r
+                            Item entry ->
+                                case entry of
+                                    Single _ value ->
+                                        foldValue value
 
-                                            Nothing ->
-                                                foldValue value
-                                    )
-                                    result
-                                    dict
+                                    Concurrent (MVR dict) ->
+                                        Dict.foldl
+                                            (\origin value result ->
+                                                case result of
+                                                    Just r ->
+                                                        Just r
+
+                                                    Nothing ->
+                                                        foldValue value
+                                            )
+                                            result
+                                            dict
             )
             Nothing
-            seq
+            layer
 
 
 values : Sequence a -> List (Entry a)
 values (Sequence seq) =
-    IntDict.values seq
+    valuesInLayer seq
+
+
+valuesInLayer : Layer a -> List (Entry a)
+valuesInLayer layer =
+    Layer.foldr
+        (\path item values ->
+            case item of
+                SubLayer subLayer ->
+                    valuesInLayer subLayer ++ values
+
+                Item entry ->
+                    entry :: values
+        )
+        []
+        layer
 
 
 {-| Return the first entry of the sequence and its path.
@@ -498,8 +597,26 @@ If the sequence is empty returns `Nothing`.
 -}
 first : Sequence a -> Maybe ( Path, Entry a )
 first (Sequence seq) =
-    IntDict.findMin seq
+    firstInLayer seq
         |> Maybe.map (mapFirst Path)
+
+
+firstInLayer layer =
+    case Layer.findMin layer of
+        Nothing ->
+            Nothing
+
+        Just ( p, SubLayer subLayer ) ->
+            firstInLayer subLayer
+                |> Maybe.map
+                    (mapFirst
+                        (\( head, tail ) ->
+                            ( p, head :: tail )
+                        )
+                    )
+
+        Just ( p, Item entry ) ->
+            Just ( ( p, [] ), entry )
 
 
 {-| Return the last entry of the sequence and its path.
@@ -507,8 +624,26 @@ If the sequence is empty returns `Nothing`.
 -}
 last : Sequence a -> Maybe ( Path, Entry a )
 last (Sequence seq) =
-    IntDict.findMax seq
+    lastInLayer seq
         |> Maybe.map (mapFirst Path)
+
+
+lastInLayer layer =
+    case Layer.findMax layer of
+        Nothing ->
+            Nothing
+
+        Just ( p, SubLayer subLayer ) ->
+            lastInLayer subLayer
+                |> Maybe.map
+                    (mapFirst
+                        (\( head, tail ) ->
+                            ( p, head :: tail )
+                        )
+                    )
+
+        Just ( p, Item entry ) ->
+            Just ( ( p, [] ), entry )
 
 
 {-| Return the entry and its path before the given path in the sequence.
@@ -516,8 +651,56 @@ Returns `Nothing` if there none.
 -}
 before : Path -> Sequence a -> Maybe ( Path, Entry a )
 before (Path path) (Sequence seq) =
-    IntDict.before path seq
+    beforeInLayer path seq
         |> Maybe.map (mapFirst Path)
+
+
+beforeInLayer ( head, tail ) layer =
+    case tail of
+        [] ->
+            case Layer.before head layer of
+                Nothing ->
+                    Nothing
+
+                Just ( p, Item entry ) ->
+                    Just ( ( p, [] ), entry )
+
+                Just ( p, SubLayer subLayer ) ->
+                    case lastInLayer subLayer of
+                        Nothing ->
+                            Nothing
+
+                        Just ( ( pHead, pTail ), entry ) ->
+                            Just ( ( p, pHead :: pTail ), entry )
+
+        next :: tail ->
+            case Layer.get head layer of
+                Nothing ->
+                    Nothing
+
+                Just (Item entry) ->
+                    Nothing
+
+                Just (SubLayer subLayer) ->
+                    case beforeInLayer ( next, tail ) subLayer of
+                        Nothing ->
+                            case Layer.before head layer of
+                                Nothing ->
+                                    Nothing
+
+                                Just ( i, Item entry ) ->
+                                    Just ( ( i, [] ), entry )
+
+                                Just ( i, SubLayer subLayer ) ->
+                                    case lastInLayer subLayer of
+                                        Nothing ->
+                                            Nothing
+
+                                        Just ( ( pHead, pTail ), entry ) ->
+                                            Just ( ( i, pHead :: pTail ), entry )
+
+                        Just ( ( pHead, pTail ), entry ) ->
+                            Just ( ( head, pHead :: pTail ), entry )
 
 
 {-| Return the entry and its path after the given path in the sequence.
@@ -525,36 +708,159 @@ Returns `Nothing` if there none.
 -}
 after : Path -> Sequence a -> Maybe ( Path, Entry a )
 after (Path path) (Sequence seq) =
-    IntDict.after path seq
+    afterInLayer path seq
         |> Maybe.map (mapFirst Path)
+
+
+afterInLayer ( head, tail ) layer =
+    case tail of
+        [] ->
+            case Layer.after head layer of
+                Nothing ->
+                    Nothing
+
+                Just ( p, Item entry ) ->
+                    Just ( ( p, [] ), entry )
+
+                Just ( p, SubLayer subLayer ) ->
+                    case firstInLayer subLayer of
+                        Nothing ->
+                            Nothing
+
+                        Just ( ( pHead, pTail ), entry ) ->
+                            Just ( ( p, pHead :: pTail ), entry )
+
+        next :: tail ->
+            case Layer.get head layer of
+                Nothing ->
+                    Nothing
+
+                Just (Item entry) ->
+                    Nothing
+
+                Just (SubLayer subLayer) ->
+                    case afterInLayer ( next, tail ) subLayer of
+                        Nothing ->
+                            case Layer.after head layer of
+                                Nothing ->
+                                    Nothing
+
+                                Just ( i, Item entry ) ->
+                                    Just ( ( i, [] ), entry )
+
+                                Just ( i, SubLayer subLayer ) ->
+                                    case firstInLayer subLayer of
+                                        Nothing ->
+                                            Nothing
+
+                                        Just ( ( pHead, pTail ), entry ) ->
+                                            Just ( ( i, pHead :: pTail ), entry )
+
+                        Just ( ( pHead, pTail ), entry ) ->
+                            Just ( ( head, pHead :: pTail ), entry )
 
 
 {-| An empty sequence.
 -}
 empty : Sequence a
 empty =
-    Sequence IntDict.empty
+    Sequence Layer.empty
 
 
 {-| Fold a sequence from the left.
 -}
 foldl : (Path -> Entry a -> b -> b) -> b -> Sequence a -> b
 foldl fun init (Sequence seq) =
-    IntDict.foldl (\int -> fun (Path int)) init seq
+    foldlLayer [] fun init seq
+
+
+foldlLayer prefix fun init layer =
+    Layer.foldl
+        (\i item result ->
+            case item of
+                Item entry ->
+                    let
+                        p =
+                            case prefix of
+                                [] ->
+                                    ( i, [] )
+
+                                head :: rest ->
+                                    ( head, rest ++ [ i ] )
+                    in
+                        fun (Path p) entry result
+
+                SubLayer subLayer ->
+                    foldlLayer (prefix ++ [ i ]) fun result subLayer
+        )
+        init
+        layer
 
 
 {-| Fold a sequence from the right.
 -}
 foldr : (Path -> Entry a -> b -> b) -> b -> Sequence a -> b
 foldr fun init (Sequence seq) =
-    IntDict.foldr (\int -> fun (Path int)) init seq
+    foldrLayer [] fun init seq
+
+
+foldrLayer prefix fun init layer =
+    Layer.foldr
+        (\i item result ->
+            case item of
+                Item entry ->
+                    let
+                        p =
+                            case prefix of
+                                [] ->
+                                    ( i, [] )
+
+                                head :: rest ->
+                                    ( head, rest ++ [ i ] )
+                    in
+                        fun (Path p) entry result
+
+                SubLayer subLayer ->
+                    foldrLayer (prefix ++ [ i ]) fun result subLayer
+        )
+        init
+        layer
 
 
 {-| Lookup an entry at the given path.
 -}
 get : Path -> Sequence a -> Maybe (Entry a)
 get (Path path) (Sequence seq) =
-    IntDict.get path seq
+    getInLayer path seq
+
+
+getInLayer ( head, tail ) layer =
+    case tail of
+        [] ->
+            case Layer.get head layer of
+                Nothing ->
+                    Nothing
+
+                Just (Item entry) ->
+                    Just entry
+
+                Just (SubLayer subLayer) ->
+                    getInLayer ( 0, [] ) subLayer
+
+        next :: rest ->
+            case Layer.get head layer of
+                Nothing ->
+                    Nothing
+
+                Just (Item entry) ->
+                    -- path with suffix of zeros equals to a path without the suffix
+                    if List.sum tail == 0 then
+                        Just entry
+                    else
+                        Nothing
+
+                Just (SubLayer subLayer) ->
+                    getInLayer ( next, rest ) subLayer
 
 
 {-| Inspect an MVR by turning it into a list of tuples of the user identifier and the `Value`.
@@ -576,7 +882,16 @@ decodeOp decoder =
 
 
 decodePath =
-    Dec.map Path Dec.int
+    Dec.list Dec.int
+        |> Dec.andThen
+            (\list ->
+                case list of
+                    head :: tail ->
+                        ( head, tail ) |> Path |> Dec.succeed
+
+                    [] ->
+                        Dec.fail "empty path"
+            )
 
 
 decodeOperation : Decoder a -> Decoder (Operation a)
@@ -607,8 +922,11 @@ encodeOp encoder op =
         |> Enc.list
 
 
-encodePath (Path path) =
-    Enc.int path
+encodePath (Path ( head, tail )) =
+    head
+        :: tail
+        |> List.map Enc.int
+        |> Enc.list
 
 
 encodeOperation : (a -> Enc.Value) -> Operation a -> Enc.Value
@@ -629,12 +947,25 @@ encodeOperation encoder op =
 -}
 maxPath : Path
 maxPath =
-    shiftLeftBy 30 1
-        |> Path
+    Path ( layerSize 0, [] )
 
 
 {-| The lowest path possible
 -}
 minPath : Path
 minPath =
-    Path 0
+    Path ( 0, [] )
+
+
+{-| Create a path (ie. a non-empty list) given its head and tail.
+-}
+path : Int -> List Int -> Path
+path head tail =
+    Path ( head, tail )
+
+
+{-| Compare Paths
+-}
+comparePath : Path -> Path -> Order
+comparePath (Path ( h1, p1 )) (Path ( h2, p2 )) =
+    compare (h1 :: p1) (h2 :: p2)

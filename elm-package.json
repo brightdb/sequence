@@ -1,12 +1,14 @@
 {
-    "version": "1.0.0",
+    "version": "1.1.0",
     "summary": "A CRDT for sequential data based on LSEQ",
     "repository": "https://github.com/brightdb/sequence.git",
     "license": "BSD3",
     "source-directories": [
         "src"
     ],
-    "exposed-modules": [ "Sequence" ],
+    "exposed-modules": [
+        "Sequence"
+    ],
     "dependencies": {
         "elm-community/intdict": "2.1.0 <= v < 3.0.0",
         "elm-community/list-extra": "7.1.0 <= v < 8.0.0",
