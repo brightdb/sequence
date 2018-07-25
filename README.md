@@ -13,7 +13,7 @@ Conflict-free replicated data types (CRDTs) to the rescue! In a mobile world wit
 ## Resources
 
 * [This project's readme](https://github.com/soundcloud/roshi) and [this blog post](http://archagon.net/blog/2018/03/24/data-laced-with-history/#conflict-free-replicated-data-types) explain CRDTs more in-depth.
-* I gave a talk on this library and CRDTs in general at [Elm Europe 2018](https://2018.elmeurope.org). Video soon to come!
+* I [gave a talk](https://www.youtube.com/watch?v=r_QmENb-TAA) on this library and CRDTs in general at [Elm Europe 2018](https://2018.elmeurope.org). 
 
 ## Installation
 
