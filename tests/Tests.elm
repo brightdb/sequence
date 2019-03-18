@@ -229,10 +229,6 @@ seqToStringReverse =
 seqToStringFold fold seq =
     fold
         (\p entry result ->
-            let
-                _ =
-                    Debug.log "seqToSring path" p
-            in
             case entry of
                 Single _ (Value v) ->
                     result ++ String.fromChar v
@@ -271,10 +267,6 @@ testAlloc =
                 in
                 test title <|
                     \() ->
-                        let
-                            _ =
-                                Debug.log "" title
-                        in
                         Expect.equal (alloc start end) pos
             )
             allocData
@@ -292,10 +284,6 @@ testInsert =
                 in
                 test title <|
                     \() ->
-                        let
-                            _ =
-                                Debug.log "" title
-                        in
                         Expect.equal (apply ops sequence |> (\( seq, _ ) -> seqToString seq)) result
             )
             insertData
@@ -313,10 +301,6 @@ testFoldR =
                 in
                 test title <|
                     \() ->
-                        let
-                            _ =
-                                Debug.log "" title
-                        in
                         Expect.equal (apply ops sequence |> (\( seq, _ ) -> seqToStringReverse seq)) (String.reverse result)
             )
             []
@@ -338,13 +322,6 @@ testBefore =
                 in
                 test title <|
                     \() ->
-                        let
-                            _ =
-                                Debug.log "" title
-
-                            _ =
-                                Debug.log "sequence" sequence
-                        in
                         Expect.equal (before path1 sequence) (Just <| ( path2, Single originX (Value 'a') ))
             )
             beforeAfterData
@@ -366,13 +343,6 @@ testAfter =
                 in
                 test title <|
                     \() ->
-                        let
-                            _ =
-                                Debug.log "" title
-
-                            _ =
-                                Debug.log "sequence" sequence
-                        in
                         Expect.equal (after path2 sequence) (Just <| ( path1, Single originX (Value 'b') ))
             )
             beforeAfterData
