@@ -1,33 +1,12 @@
-module Sequence
-    exposing
-        ( Sequence
-        , Path
-        , Op
-        , Entry(..)
-        , Value(..)
-        , TombValue(..)
-        , Operation(..)
-        , MVR
-        , alloc
-        , createInsert
-        , createRemove
-        , apply
-        , empty
-        , get
-        , first
-        , last
-        , after
-        , before
-        , foldl
-        , foldr
-        , mvrToList
-        , decodeOp
-        , encodeOp
-        , minPath
-        , maxPath
-        , path
-        , comparePath
-        )
+module Sequence exposing
+    ( Sequence, Path, Op, Entry(..), Value(..), TombValue(..), Operation(..), MVR
+    , alloc, createInsert, createRemove, apply
+    , empty, get, first, last, after, before, foldl, foldr
+    , mvrToList
+    , decodeOp, encodeOp
+    , minPath, maxPath, path, comparePath
+    , pathToString
+    )
 
 {-| This is a prototype of a CRDT for sequential data written in Elm.
 
@@ -67,14 +46,14 @@ Implementation stems from Nedelec et al. "LSEQ: an adaptive structure for sequen
 
 -}
 
-import IntDict as Layer exposing (IntDict)
-import Dict exposing (Dict)
-import List.Extra
-import Tuple exposing (..)
-import Random.Pcg as Rand
 import Bitwise exposing (..)
+import Dict exposing (Dict)
+import IntDict as Layer exposing (IntDict)
 import Json.Decode as Dec exposing (Decoder)
 import Json.Encode as Enc
+import List.Extra
+import Random as Rand
+import Tuple exposing (..)
 
 
 {-| The data type itself. Takes a user-defined type as its value type.
@@ -179,8 +158,8 @@ gauss x =
 
 
 bits l =
-    (gauss (offset + l))
-        - (gauss (offset - 1))
+    gauss (offset + l)
+        - gauss (offset - 1)
         + 1
 
 
@@ -196,14 +175,15 @@ layerMaskComplete l =
 
 layerMask l =
     let
-        bits =
+        bits_ =
             if l == 0 then
                 offset + 1
+
             else
                 offset + l
     in
-        (shiftLeftBy bits 1 - 1)
-            |> shiftLeftBy (shift l)
+    (shiftLeftBy bits_ 1 - 1)
+        |> shiftLeftBy (shift l)
 
 
 boundarySize l =
@@ -216,22 +196,24 @@ layerFromRange start end l =
         mask =
             layerMask l
     in
-        if and start mask == and end mask && l < maxLayer then
-            layerFromRange start end (l + 1)
-        else
-            l
+    if and start mask == and end mask && l < maxLayer then
+        layerFromRange start end (l + 1)
+
+    else
+        l
 
 
 layerFromPath : Int -> Int -> Int
-layerFromPath path l =
+layerFromPath path_ l =
     let
         mask =
             layerMask l
     in
-        if and path mask == 0 && l > 0 then
-            layerFromPath path (l - 1)
-        else
-            l
+    if and path_ mask == 0 && l > 0 then
+        layerFromPath path_ (l - 1)
+
+    else
+        l
 
 
 layerSize l =
@@ -265,13 +247,15 @@ getCommonPrefix ( sHead, sTail ) ( eHead, eTail ) =
         q =
             if prefixP == prefixQ then
                 q_
+
             else
                 List.length prefixP |> layerSize
     in
-        if abs (p - q) > 1 then
-            ( prefixP, p, q )
-        else
-            ( prefixP ++ [ p ], 0, List.length prefixP + 1 |> layerSize )
+    if abs (p - q) > 1 then
+        ( prefixP, p, q )
+
+    else
+        ( prefixP ++ [ p ], 0, List.length prefixP + 1 |> layerSize )
 
 
 {-| Allocate a path given it's lower and upper bounds (non-inclusive).
@@ -294,7 +278,7 @@ alloc (Path ( sHead, sTail )) (Path ( eHead, eTail )) =
             List.sum prefix |> Rand.initialSeed
 
         ( b, _ ) =
-            Rand.step Rand.bool seed2
+            Rand.step (Rand.uniform True [ False ]) seed2
 
         boundary =
             List.length prefix
@@ -303,6 +287,7 @@ alloc (Path ( sHead, sTail )) (Path ( eHead, eTail )) =
         ( lower, upper ) =
             if b then
                 ( p + 1, p + boundary |> min (q - 1) )
+
             else
                 ( q - boundary |> max (p + 1), q - 1 )
 
@@ -310,33 +295,33 @@ alloc (Path ( sHead, sTail )) (Path ( eHead, eTail )) =
             Rand.step (Rand.int lower upper) seed
                 |> Tuple.first
     in
-        case prefix of
-            [] ->
-                Path ( i, [] )
+    case prefix of
+        [] ->
+            Path ( i, [] )
 
-            head :: tail ->
-                tail
-                    ++ [ i ]
-                    |> (,) head
-                    |> Path
+        head :: tail ->
+            tail
+                ++ [ i ]
+                |> (\b_ -> ( head, b_ ))
+                |> Path
 
 
 {-| Create an insert operation. Pass it the user identifier, a path and the
 value to insert.
 -}
 createInsert : String -> Path -> a -> Op a
-createInsert target path a =
+createInsert target path_ a =
     Insert a
-        |> Op target target path
+        |> Op target target path_
 
 
 {-| Create a remove operation. Pass it the removing user's identifier, the user
 identifier of the removed value (ie. to target it in a MVR) and the path.
 -}
 createRemove : String -> String -> Path -> Op a
-createRemove origin target path =
+createRemove origin target path_ =
     Remove
-        |> Op origin target path
+        |> Op origin target path_
 
 
 {-| Apply multiple ops at once to a sequence. Returns the updated sequence and
@@ -345,22 +330,23 @@ list of successful operations (which actually changed something).
 apply : List (Op a) -> Sequence a -> ( Sequence a, List (Op a) )
 apply ops (Sequence seq) =
     List.foldl
-        (\op ( seq, newOps ) ->
+        (\op ( seq2, newOps ) ->
             let
-                ( seq_, success ) =
+                ( seq3, success ) =
                     case op.op of
                         Insert v ->
-                            insert op.path op.target v seq
+                            insert op.path op.target v seq2
 
                         Remove ->
-                            remove op.path op.target seq
+                            remove op.path op.target seq2
             in
-                ( seq_
-                , if success then
-                    newOps ++ [ op ]
-                  else
-                    newOps
-                )
+            ( seq3
+            , if success then
+                newOps ++ [ op ]
+
+              else
+                newOps
+            )
         )
         ( seq, [] )
         ops
@@ -379,7 +365,7 @@ insert (Path ( head, tail )) origin value layer =
 
                 Just (Item entry) ->
                     insertAtEntry origin value entry
-                        |> mapFirst (\entry -> Layer.insert head (Item entry) layer)
+                        |> mapFirst (\entry_ -> Layer.insert head (Item entry_) layer)
 
                 Just (SubLayer subLayer) ->
                     insert (Path ( 0, [] )) origin value subLayer
@@ -424,10 +410,12 @@ insertAtEntry origin value entry =
                     |> Concurrent
                 , True
                 )
+
             else if v == Tomb TombUnknown then
                 ( Single origin2 (Tomb (TombValue value))
                 , True
                 )
+
             else
                 ( entry, False )
 
@@ -461,7 +449,7 @@ remove (Path ( head, tail )) origin layer =
 
                 Just (Item entry) ->
                     removeAtEntry origin entry
-                        |> mapFirst (\entry -> Layer.insert head (Item entry) layer)
+                        |> mapFirst (\entry_ -> Layer.insert head (Item entry_) layer)
 
                 Just (SubLayer subLayer) ->
                     remove (Path ( 0, [] )) origin subLayer
@@ -499,6 +487,7 @@ removeAtEntry origin entry =
 
                     Tomb _ ->
                         ( entry, False )
+
             else
                 ( Dict.insert origin (Tomb TombUnknown) Dict.empty
                     |> Dict.insert origin2 value
@@ -533,43 +522,44 @@ findInLayer predicate layer =
                 Value a ->
                     if predicate a then
                         Just a
+
                     else
                         Nothing
 
                 Tomb _ ->
                     Nothing
     in
-        Layer.foldl
-            (\path item result ->
-                case result of
-                    Just r ->
-                        Just r
+    Layer.foldl
+        (\path_ item result ->
+            case result of
+                Just r ->
+                    Just r
 
-                    Nothing ->
-                        case item of
-                            SubLayer subLayer ->
-                                findInLayer predicate subLayer
+                Nothing ->
+                    case item of
+                        SubLayer subLayer ->
+                            findInLayer predicate subLayer
 
-                            Item entry ->
-                                case entry of
-                                    Single _ value ->
-                                        foldValue value
+                        Item entry ->
+                            case entry of
+                                Single _ value ->
+                                    foldValue value
 
-                                    Concurrent (MVR dict) ->
-                                        Dict.foldl
-                                            (\origin value result ->
-                                                case result of
-                                                    Just r ->
-                                                        Just r
+                                Concurrent (MVR dict) ->
+                                    Dict.foldl
+                                        (\origin value result_ ->
+                                            case result_ of
+                                                Just r ->
+                                                    Just r
 
-                                                    Nothing ->
-                                                        foldValue value
-                                            )
-                                            result
-                                            dict
-            )
-            Nothing
-            layer
+                                                Nothing ->
+                                                    foldValue value
+                                        )
+                                        result
+                                        dict
+        )
+        Nothing
+        layer
 
 
 values : Sequence a -> List (Entry a)
@@ -580,13 +570,13 @@ values (Sequence seq) =
 valuesInLayer : Layer a -> List (Entry a)
 valuesInLayer layer =
     Layer.foldr
-        (\path item values ->
+        (\path_ item values_ ->
             case item of
                 SubLayer subLayer ->
-                    valuesInLayer subLayer ++ values
+                    valuesInLayer subLayer ++ values_
 
                 Item entry ->
-                    entry :: values
+                    entry :: values_
         )
         []
         layer
@@ -650,8 +640,8 @@ lastInLayer layer =
 Returns `Nothing` if there none.
 -}
 before : Path -> Sequence a -> Maybe ( Path, Entry a )
-before (Path path) (Sequence seq) =
-    beforeInLayer path seq
+before (Path path_) (Sequence seq) =
+    beforeInLayer path_ seq
         |> Maybe.map (mapFirst Path)
 
 
@@ -673,7 +663,7 @@ beforeInLayer ( head, tail ) layer =
                         Just ( ( pHead, pTail ), entry ) ->
                             Just ( ( p, pHead :: pTail ), entry )
 
-        next :: tail ->
+        next :: tail_ ->
             case Layer.get head layer of
                 Nothing ->
                     Nothing
@@ -682,7 +672,7 @@ beforeInLayer ( head, tail ) layer =
                     Nothing
 
                 Just (SubLayer subLayer) ->
-                    case beforeInLayer ( next, tail ) subLayer of
+                    case beforeInLayer ( next, tail_ ) subLayer of
                         Nothing ->
                             case Layer.before head layer of
                                 Nothing ->
@@ -691,8 +681,8 @@ beforeInLayer ( head, tail ) layer =
                                 Just ( i, Item entry ) ->
                                     Just ( ( i, [] ), entry )
 
-                                Just ( i, SubLayer subLayer ) ->
-                                    case lastInLayer subLayer of
+                                Just ( i, SubLayer subLayer_ ) ->
+                                    case lastInLayer subLayer_ of
                                         Nothing ->
                                             Nothing
 
@@ -707,8 +697,8 @@ beforeInLayer ( head, tail ) layer =
 Returns `Nothing` if there none.
 -}
 after : Path -> Sequence a -> Maybe ( Path, Entry a )
-after (Path path) (Sequence seq) =
-    afterInLayer path seq
+after (Path path_) (Sequence seq) =
+    afterInLayer path_ seq
         |> Maybe.map (mapFirst Path)
 
 
@@ -730,7 +720,7 @@ afterInLayer ( head, tail ) layer =
                         Just ( ( pHead, pTail ), entry ) ->
                             Just ( ( p, pHead :: pTail ), entry )
 
-        next :: tail ->
+        next :: tail_ ->
             case Layer.get head layer of
                 Nothing ->
                     Nothing
@@ -739,7 +729,7 @@ afterInLayer ( head, tail ) layer =
                     Nothing
 
                 Just (SubLayer subLayer) ->
-                    case afterInLayer ( next, tail ) subLayer of
+                    case afterInLayer ( next, tail_ ) subLayer of
                         Nothing ->
                             case Layer.after head layer of
                                 Nothing ->
@@ -748,8 +738,8 @@ afterInLayer ( head, tail ) layer =
                                 Just ( i, Item entry ) ->
                                     Just ( ( i, [] ), entry )
 
-                                Just ( i, SubLayer subLayer ) ->
-                                    case firstInLayer subLayer of
+                                Just ( i, SubLayer subLayer_ ) ->
+                                    case firstInLayer subLayer_ of
                                         Nothing ->
                                             Nothing
 
@@ -788,7 +778,7 @@ foldlLayer prefix fun init layer =
                                 head :: rest ->
                                     ( head, rest ++ [ i ] )
                     in
-                        fun (Path p) entry result
+                    fun (Path p) entry result
 
                 SubLayer subLayer ->
                     foldlLayer (prefix ++ [ i ]) fun result subLayer
@@ -818,7 +808,7 @@ foldrLayer prefix fun init layer =
                                 head :: rest ->
                                     ( head, rest ++ [ i ] )
                     in
-                        fun (Path p) entry result
+                    fun (Path p) entry result
 
                 SubLayer subLayer ->
                     foldrLayer (prefix ++ [ i ]) fun result subLayer
@@ -830,8 +820,8 @@ foldrLayer prefix fun init layer =
 {-| Lookup an entry at the given path.
 -}
 get : Path -> Sequence a -> Maybe (Entry a)
-get (Path path) (Sequence seq) =
-    getInLayer path seq
+get (Path path_) (Sequence seq) =
+    getInLayer path_ seq
 
 
 getInLayer ( head, tail ) layer =
@@ -856,6 +846,7 @@ getInLayer ( head, tail ) layer =
                     -- path with suffix of zeros equals to a path without the suffix
                     if List.sum tail == 0 then
                         Just entry
+
                     else
                         Nothing
 
@@ -904,6 +895,7 @@ decodeOperation decoder =
                 (\str ->
                     if str == "r" then
                         Dec.succeed Remove
+
                     else
                         Dec.fail "unknown operation"
                 )
@@ -919,14 +911,14 @@ encodeOp encoder op =
     , encodePath op.path
     , encodeOperation encoder op.op
     ]
-        |> Enc.list
+        |> Enc.list identity
 
 
 encodePath (Path ( head, tail )) =
     head
         :: tail
         |> List.map Enc.int
-        |> Enc.list
+        |> Enc.list identity
 
 
 encodeOperation : (a -> Enc.Value) -> Operation a -> Enc.Value
@@ -969,3 +961,12 @@ path head tail =
 comparePath : Path -> Path -> Order
 comparePath (Path ( h1, p1 )) (Path ( h2, p2 )) =
     compare (h1 :: p1) (h2 :: p2)
+
+
+pathToString : Path -> String
+pathToString (Path ( head, tail )) =
+    head
+        :: tail
+        |> List.map String.fromInt
+        |> String.join "/"
+        |> (\s -> s ++ "/")
