@@ -19,7 +19,7 @@ Conflict-free replicated data types (CRDTs) to the rescue! In a mobile world wit
 
 This library is for Elm programs. So I assume you have [Elm](https://elm-lang.org) installed. Then install this lib in your project through:
 
-    elm package install brightdb/sequence
+    elm install brightdb/sequence
 
 ## Example
 
@@ -28,7 +28,7 @@ This example demonstrates an example use case of this library. First, we create 
 Here we are dealing with text as a sequence of characters. However, the CRDT can be applied to sequences (ordered lists) of any other type (eg. todos).
 
 ```elm
-module Main exposing (..)
+module Main exposing (main)
 
 import Sequence exposing (..)
 import String

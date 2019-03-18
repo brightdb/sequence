@@ -4,8 +4,7 @@ module Sequence exposing
     , empty, get, first, last, after, before, foldl, foldr
     , mvrToList
     , decodeOp, encodeOp
-    , minPath, maxPath, path, comparePath
-    , pathToString
+    , minPath, maxPath, path, comparePath, pathToString
     )
 
 {-| This is a prototype of a CRDT for sequential data written in Elm.
@@ -42,7 +41,7 @@ Implementation stems from Nedelec et al. "LSEQ: an adaptive structure for sequen
 
 # Paths
 
-@docs minPath, maxPath, path, comparePath
+@docs minPath, maxPath, path, comparePath, pathToString
 
 -}
 
@@ -72,9 +71,18 @@ type LayerItem a
 
 
 {-| The unique identifier of a Entry's position in the sequence.
-It's called "path" because the data type consists of multiple layers
-comparable to a filesystem's directories. A path to a value works like
-a path to a file.
+It consists of a list of positions, one for each layer in the data structure.
+
+Eg. given this data structure:
+
+    [a|b|c|d]
+      |
+      [x|y]
+
+  - 'a' has path `[0]`
+  - 'c' has path `[2]`
+  - 'x' has path `[1,0]`
+
 -}
 type Path
     = Path ( Int, List Int )
@@ -963,6 +971,8 @@ comparePath (Path ( h1, p1 )) (Path ( h2, p2 )) =
     compare (h1 :: p1) (h2 :: p2)
 
 
+{-| Turn a path into a string.
+-}
 pathToString : Path -> String
 pathToString (Path ( head, tail )) =
     head
