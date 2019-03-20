@@ -2,9 +2,10 @@ module Sequence exposing
     ( Sequence, Path, Op, Entry(..), Value(..), TombValue(..), Operation(..), MVR
     , alloc, createInsert, createRemove, apply
     , empty, get, first, last, after, before, foldl, foldr
-    , mvrToList
+    , mvrToRecord
     , decodeOp, encodeOp
     , minPath, maxPath, path, comparePath, pathToString
+    , mvrFilterValues, mvrFoldl, mvrFoldr, mvrGet, mvrSize
     )
 
 {-| This is a prototype of a CRDT for sequential data written in Elm.
@@ -31,7 +32,7 @@ Implementation stems from Nedelec et al. "LSEQ: an adaptive structure for sequen
 
 # MVR handling
 
-@docs mvrToList
+@docs mvrToRecord
 
 
 # Decoders
@@ -105,10 +106,10 @@ type Entry a
 
 
 {-| A multi-value registry is a dictionary of user identifiers and Values.
-Get its contents with [`mvrToList`](#mvrToList).
+Get its contents with [`mvrToRecord`](#mvrToRecord).
 -}
 type MVR a
-    = MVR (Dict String (Value a))
+    = MVR ( String, Value a ) ( String, Value a ) (Dict String (Value a))
 
 
 {-| The actual value. After applying an Insert operation it is `Value a`, after
@@ -412,9 +413,7 @@ insertAtEntry origin value entry =
     case entry of
         Single origin2 v ->
             if origin /= origin2 then
-                ( Dict.insert origin (Value value) Dict.empty
-                    |> Dict.insert origin2 v
-                    |> MVR
+                ( mvrCreate ( origin, Value value ) ( origin2, v )
                     |> Concurrent
                 , True
                 )
@@ -427,18 +426,16 @@ insertAtEntry origin value entry =
             else
                 ( entry, False )
 
-        Concurrent (MVR dict) ->
-            case Dict.get origin dict of
+        Concurrent mvr ->
+            case mvrGet origin mvr of
                 Just (Tomb TombUnknown) ->
-                    ( Dict.insert origin (Tomb (TombValue value)) dict
-                        |> MVR
+                    ( mvrInsert origin (Tomb (TombValue value)) mvr
                         |> Concurrent
                     , True
                     )
 
                 Nothing ->
-                    ( Dict.insert origin (Value value) dict
-                        |> MVR
+                    ( mvrInsert origin (Value value) mvr
                         |> Concurrent
                     , True
                     )
@@ -497,18 +494,15 @@ removeAtEntry origin entry =
                         ( entry, False )
 
             else
-                ( Dict.insert origin (Tomb TombUnknown) Dict.empty
-                    |> Dict.insert origin2 value
-                    |> MVR
+                ( mvrCreate ( origin, Tomb TombUnknown ) ( origin2, value )
                     |> Concurrent
                 , True
                 )
 
-        Concurrent (MVR dict) ->
-            case Dict.get origin dict of
+        Concurrent mvr ->
+            case mvrGet origin mvr of
                 Just (Value v) ->
-                    ( Dict.insert origin (Tomb (TombValue v)) dict
-                        |> MVR
+                    ( mvrInsert origin (Tomb (TombValue v)) mvr
                         |> Concurrent
                     , True
                     )
@@ -553,8 +547,8 @@ findInLayer predicate layer =
                                 Single _ value ->
                                     foldValue value
 
-                                Concurrent (MVR dict) ->
-                                    Dict.foldl
+                                Concurrent mvr ->
+                                    mvrFoldl
                                         (\origin value result_ ->
                                             case result_ of
                                                 Just r ->
@@ -564,7 +558,7 @@ findInLayer predicate layer =
                                                     foldValue value
                                         )
                                         result
-                                        dict
+                                        mvr
         )
         Nothing
         layer
@@ -862,11 +856,103 @@ getInLayer ( head, tail ) layer =
                     getInLayer ( next, rest ) subLayer
 
 
-{-| Inspect an MVR by turning it into a list of tuples of the user identifier and the `Value`.
+{-| Inspect an MVR by turning it into a record of the first, the second and a list of more entries.
 -}
-mvrToList : MVR a -> List ( String, Value a )
-mvrToList (MVR mvr) =
-    Dict.toList mvr
+mvrToRecord : MVR a -> { first : ( String, Value a ), second : ( String, Value a ), more : List ( String, Value a ) }
+mvrToRecord (MVR one two rest) =
+    { first = one, second = two, more = Dict.toList rest }
+
+
+{-| Fold an MVR from left.
+-}
+mvrFoldl : (String -> Value a -> b -> b) -> b -> MVR a -> b
+mvrFoldl fun init (MVR ( origin1, value1 ) ( origin2, value2 ) rest) =
+    fun origin1 value1 init
+        |> fun origin2 value2
+        |> (\b -> Dict.foldl fun b rest)
+
+
+{-| Fold an MVR from right.
+-}
+mvrFoldr : (String -> Value a -> b -> b) -> b -> MVR a -> b
+mvrFoldr fun init (MVR ( origin1, value1 ) ( origin2, value2 ) rest) =
+    Dict.foldr fun init rest
+        |> fun origin1 value2
+        |> fun origin2 value1
+
+
+{-| Filter MVR for `Value`s.
+-}
+mvrFilterValues : MVR a -> List ( String, a )
+mvrFilterValues =
+    mvrFoldr
+        (\origin value list ->
+            case value of
+                Value v ->
+                    ( origin, v ) :: list
+
+                _ ->
+                    list
+        )
+        []
+
+
+{-| Get a value from an MVR given the origin.
+-}
+mvrGet : String -> MVR a -> Maybe (Value a)
+mvrGet origin (MVR ( origin1, value1 ) ( origin2, value2 ) rest) =
+    if origin1 == origin then
+        Just value1
+
+    else if origin2 == origin then
+        Just value2
+
+    else
+        Dict.get origin rest
+
+
+{-| Create an MVR. An MVR consists of at least two origin - value pairs.
+-}
+mvrCreate : ( String, Value a ) -> ( String, Value a ) -> MVR a
+mvrCreate ( origin1, value1 ) ( origin2, value2 ) =
+    if origin1 < origin2 then
+        MVR ( origin1, value1 ) ( origin2, value2 ) Dict.empty
+
+    else
+        MVR ( origin2, value2 ) ( origin1, value1 ) Dict.empty
+
+
+{-| Insert an entry into an MVR.
+-}
+mvrInsert : String -> Value a -> MVR a -> MVR a
+mvrInsert origin value (MVR ( origin1, value1 ) ( origin2, value2 ) rest) =
+    if origin == origin1 then
+        MVR ( origin, value ) ( origin2, value2 ) rest
+
+    else if origin == origin2 then
+        MVR ( origin1, value1 ) ( origin, value ) rest
+
+    else
+        let
+            ( one, two, ( origin3, value3 ) ) =
+                if origin < origin1 then
+                    ( ( origin, value ), ( origin1, value1 ), ( origin2, value2 ) )
+
+                else if origin < origin2 then
+                    ( ( origin1, value1 ), ( origin, value ), ( origin2, value2 ) )
+
+                else
+                    ( ( origin1, value1 ), ( origin2, value2 ), ( origin, value ) )
+        in
+        Dict.insert origin3 value3 rest
+            |> MVR one two
+
+
+{-| Get the size of an MVR.
+-}
+mvrSize : MVR a -> Int
+mvrSize (MVR _ _ rest) =
+    Dict.size rest + 2
 
 
 {-| Decode an Op.
