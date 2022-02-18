@@ -5,3 +5,5 @@ lib
 dist
 elm-stuff
 elm.js
+.vimrc
+tags
