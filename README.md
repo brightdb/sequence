@@ -113,6 +113,3 @@ Yields:
 
 So `x`, `y` and `z` have been inserted by "me" while `a` has been inserted by "you" concurrently to `y`.
 
-## Really distributed example
-
-For a distributed collaborative editor as a more elaborated example see [brightdb-text](https://github.com/brightdb/brightdb-text).
