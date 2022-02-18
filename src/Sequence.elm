@@ -1,23 +1,20 @@
 module Sequence exposing
-    ( Sequence, Path, Op, Entry(..), Value(..), TombValue(..), Operation(..), MVR
+    ( Sequence, Path, Entry(..), Value(..), TombValue(..), MVR, Operation(..), Op
     , alloc, createInsert, createRemove, apply
     , empty, get, first, last, after, before, foldl, foldr
-    , mvrToRecord
+    , mvrToRecord, mvrToList, mvrFilterValues, mvrFoldl, mvrFoldr, mvrGet, mvrSize
     , decodeOp, encodeOp
     , minPath, maxPath, path, comparePath, pathToString
-    , mvrFilterValues, mvrFoldl, mvrFoldr, mvrGet, mvrSize
     )
 
-{-| This is a prototype of a CRDT for sequential data written in Elm.
+{-| A CRDT for sequential data (eg. lists of characters aka. text)
 
-**Work in progress!** Use with caution.
-
-Implementation stems from Nedelec et al. "LSEQ: an adaptive structure for sequences in distributed collaborative editing" (2013).
+Implementation took inspiration from from Nedelec et al. "LSEQ: an adaptive structure for sequences in distributed collaborative editing" (2013).
 
 
 # Definition
 
-@docs Sequence, Path, Op, Entry, Value, TombValue, Operation, MVR
+@docs Sequence, Path, Entry, Value, TombValue, MVR, Operation, Op
 
 
 # Operations
@@ -32,7 +29,7 @@ Implementation stems from Nedelec et al. "LSEQ: an adaptive structure for sequen
 
 # MVR handling
 
-@docs mvrToRecord
+@docs mvrToRecord, mvrToList, mvrFilterValues, mvrFoldl, mvrFoldr, mvrGet, mvrSize
 
 
 # Decoders
@@ -268,8 +265,6 @@ getCommonPrefix ( sHead, sTail ) ( eHead, eTail ) =
 
 
 {-| Allocate a path given it's lower and upper bounds (non-inclusive).
-The bounds should be paths that are already taken and the possible path's
-between should all be free.
 -}
 alloc : Path -> Path -> Path
 alloc (Path ( sHead, sTail )) (Path ( eHead, eTail )) =
@@ -639,7 +634,7 @@ lastInLayer layer =
 
 
 {-| Return the entry and its path before the given path in the sequence.
-Returns `Nothing` if there none.
+Returns `Nothing` if there is none.
 -}
 before : Path -> Sequence a -> Maybe ( Path, Entry a )
 before (Path path_) (Sequence seq) =
@@ -696,7 +691,7 @@ beforeInLayer ( head, tail ) layer =
 
 
 {-| Return the entry and its path after the given path in the sequence.
-Returns `Nothing` if there none.
+Returns `Nothing` if there is none.
 -}
 after : Path -> Sequence a -> Maybe ( Path, Entry a )
 after (Path path_) (Sequence seq) =
@@ -863,6 +858,13 @@ mvrToRecord (MVR one two rest) =
     { first = one, second = two, more = Dict.toList rest }
 
 
+{-| Convenience function to turn an MVR into a list of entries.
+-}
+mvrToList : MVR a -> List ( String, Value a )
+mvrToList (MVR one two rest) =
+    [ one, two ] ++ Dict.toList rest
+
+
 {-| Fold an MVR from left.
 -}
 mvrFoldl : (String -> Value a -> b -> b) -> b -> MVR a -> b
@@ -996,7 +998,7 @@ decodeOperation decoder =
         ]
 
 
-{-| Encoder an Op given an value specific encoder.
+{-| Encode an Op given a value specific encoder.
 -}
 encodeOp : (a -> Enc.Value) -> Op a -> Enc.Value
 encodeOp encoder op =

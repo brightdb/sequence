@@ -41,102 +41,101 @@ type alias InsertData =
 
 
 insertData =
-    [ {- }InsertData "insert a" empty [ createInsert originX (path 3 []) 'a' ] "a"
-         , InsertData "insert ab"
-             empty
-             [ createInsert originX (path 3 []) 'a'
-             , createInsert originX (path 5 []) 'b'
-             ]
-             "ab"
-         , InsertData "insert ab0"
-             empty
-             [ createInsert originX (path 3 []) 'a'
-             , createInsert originX (path 5 []) 'b'
-             , createInsert originX (path 1 []) '0'
-             ]
-             "0ab"
-         , InsertData "insert abcd, double"
-             empty
-             [ createInsert originX (path 3 []) 'a'
-             , createInsert originX (path 5 []) 'b'
-             , createInsert originX (path 8 []) 'c'
-             , createInsert originX (path 8 [ 4 ]) 'd'
-             , createInsert originX (path 3 []) 'a'
-             , createInsert originX (path 5 []) 'b'
-             , createInsert originX (path 8 []) 'c'
-             , createInsert originX (path 8 [ 4 ]) 'd'
-             ]
-             "abcd"
-         , InsertData "insert a, then 0"
-             empty
-             [ createInsert originX (path 3 []) 'a'
-             , createInsert originX (path 3 []) '0'
-             ]
-             "a"
-         , InsertData "insert abc, different layers"
-             empty
-             [ createInsert originX (path 3 []) 'a'
-             , createInsert originX (path 3 [ 5 ]) 'b'
-             , createInsert originX (path 5 []) 'c'
-             ]
-             "abc"
-         , InsertData "insert ab, sibling layers"
-             empty
-             [ createInsert originX (path 0 [ 1 ]) 'a'
-             , createInsert originX (path 0 [ 2 ]) 'b'
-             ]
-             "ab"
-         , InsertData "insert abcd, different layers"
-             empty
-             [ createInsert originX (path 0 [ 0, 0, 2 ]) 'b'
-             , createInsert originX (path 0 [ 0, 0, 1 ]) 'a'
-             , createInsert originX (path 8 []) 'd'
-             , createInsert originX (path 3 [ 4, 7, 50, 20 ]) 'c'
-             ]
-             "abcd"
-         , InsertData "insert abcd, concurrent"
-             empty
-             [ createInsert originX (path 0 []) 'a'
-             , createInsert originX (path 1 []) 'b'
-             , createInsert originY (path 1 []) 'c'
-             , createInsert originZ (path 1 []) 'b'
-             , createInsert originX (path 2 []) 'd'
-             ]
-             "aBCBd"
-         , InsertData "insert abc, and remove c"
-             empty
-             [ createInsert originX (path 0 []) 'a'
-             , createInsert originX (path 1 []) 'b'
-             , createInsert originX (path 2 []) 'c'
-             , createRemove originX originX (path 2 [])
-             ]
-             "ab"
-         , InsertData "insert abc, and remove b"
-             empty
-             [ createInsert originX (path 0 []) 'a'
-             , createInsert originX (path 1 []) 'b'
-             , createInsert originX (path 2 []) 'c'
-             , createRemove originX originX (path 1 [])
-             ]
-             "ac"
-         , InsertData "insert abc, and remove a"
-             empty
-             [ createInsert originX (path 0 []) 'a'
-             , createInsert originX (path 1 []) 'b'
-             , createInsert originX (path 2 []) 'c'
-             , createRemove originX originX (path 0 [])
-             ]
-             "bc"
-         , InsertData "insert abc, and remove nothing"
-             empty
-             [ createInsert originX (path 0 []) 'a'
-             , createInsert originX (path 1 []) 'b'
-             , createInsert originX (path 2 []) 'c'
-             , createRemove originX originX (path 3 [])
-             ]
-             "abc"
-      -}
-      InsertData "insert abcd, concurrent"
+    [ InsertData "insert a" empty [ createInsert originX (path 3 []) 'a' ] "a"
+    , InsertData "insert ab"
+        empty
+        [ createInsert originX (path 3 []) 'a'
+        , createInsert originX (path 5 []) 'b'
+        ]
+        "ab"
+    , InsertData "insert ab0"
+        empty
+        [ createInsert originX (path 3 []) 'a'
+        , createInsert originX (path 5 []) 'b'
+        , createInsert originX (path 1 []) '0'
+        ]
+        "0ab"
+    , InsertData "insert abcd, double"
+        empty
+        [ createInsert originX (path 3 []) 'a'
+        , createInsert originX (path 5 []) 'b'
+        , createInsert originX (path 8 []) 'c'
+        , createInsert originX (path 8 [ 4 ]) 'd'
+        , createInsert originX (path 3 []) 'a'
+        , createInsert originX (path 5 []) 'b'
+        , createInsert originX (path 8 []) 'c'
+        , createInsert originX (path 8 [ 4 ]) 'd'
+        ]
+        "abcd"
+    , InsertData "insert a, then 0"
+        empty
+        [ createInsert originX (path 3 []) 'a'
+        , createInsert originX (path 3 []) '0'
+        ]
+        "a"
+    , InsertData "insert abc, different layers"
+        empty
+        [ createInsert originX (path 3 []) 'a'
+        , createInsert originX (path 3 [ 5 ]) 'b'
+        , createInsert originX (path 5 []) 'c'
+        ]
+        "abc"
+    , InsertData "insert ab, sibling layers"
+        empty
+        [ createInsert originX (path 0 [ 1 ]) 'a'
+        , createInsert originX (path 0 [ 2 ]) 'b'
+        ]
+        "ab"
+    , InsertData "insert abcd, different layers"
+        empty
+        [ createInsert originX (path 0 [ 0, 0, 2 ]) 'b'
+        , createInsert originX (path 0 [ 0, 0, 1 ]) 'a'
+        , createInsert originX (path 8 []) 'd'
+        , createInsert originX (path 3 [ 4, 7, 50, 20 ]) 'c'
+        ]
+        "abcd"
+    , InsertData "insert abcd, concurrent"
+        empty
+        [ createInsert originX (path 0 []) 'a'
+        , createInsert originX (path 1 []) 'b'
+        , createInsert originY (path 1 []) 'c'
+        , createInsert originZ (path 1 []) 'b'
+        , createInsert originX (path 2 []) 'd'
+        ]
+        "aBCBd"
+    , InsertData "insert abc, and remove c"
+        empty
+        [ createInsert originX (path 0 []) 'a'
+        , createInsert originX (path 1 []) 'b'
+        , createInsert originX (path 2 []) 'c'
+        , createRemove originX originX (path 2 [])
+        ]
+        "ab"
+    , InsertData "insert abc, and remove b"
+        empty
+        [ createInsert originX (path 0 []) 'a'
+        , createInsert originX (path 1 []) 'b'
+        , createInsert originX (path 2 []) 'c'
+        , createRemove originX originX (path 1 [])
+        ]
+        "ac"
+    , InsertData "insert abc, and remove a"
+        empty
+        [ createInsert originX (path 0 []) 'a'
+        , createInsert originX (path 1 []) 'b'
+        , createInsert originX (path 2 []) 'c'
+        , createRemove originX originX (path 0 [])
+        ]
+        "bc"
+    , InsertData "insert abc, and remove nothing"
+        empty
+        [ createInsert originX (path 0 []) 'a'
+        , createInsert originX (path 1 []) 'b'
+        , createInsert originX (path 2 []) 'c'
+        , createRemove originX originX (path 3 [])
+        ]
+        "abc"
+    , InsertData "insert abcd, concurrent"
         empty
         [ createInsert originX (path 0 []) 'a'
         , createInsert originX (path 1 []) 'b'

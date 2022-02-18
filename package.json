@@ -1,0 +1,20 @@
+{
+  "name": "sequence",
+  "version": "1.0.0",
+  "description": "This is a operation-based conflict-free replicated data type (CRDT) for sequential data written in [Elm](https://elm-lang.org). Another name for it is \"ElmSEQ\".",
+  "main": "elm.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "npx elm-test"
+  },
+  "repository": "github:brightdb/sequence",
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "elm": "^0.19.1-5",
+    "elm-test": "^0.19.1-revision7"
+  }
+}
